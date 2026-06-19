@@ -10,7 +10,7 @@ import (
 // PanicsAt is the explicit-skip form for wrapping packages; see EqualAt.
 func PanicsAt(t testing.TB, extraSkip int, fn func()) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if _, panicked := recovered(fn); panicked {
 		return
 	}
@@ -21,7 +21,7 @@ func PanicsAt(t testing.TB, extraSkip int, fn func()) {
 // NotPanicsAt is the explicit-skip form for wrapping packages; see EqualAt.
 func NotPanicsAt(t testing.TB, extraSkip int, fn func()) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	value, panicked := recovered(fn)
 	if !panicked {
 		return
@@ -33,7 +33,7 @@ func NotPanicsAt(t testing.TB, extraSkip int, fn func()) {
 // PanicsWithAt is the explicit-skip form for wrapping packages; see EqualAt.
 func PanicsWithAt(t testing.TB, extraSkip int, want any, fn func()) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	value, panicked := recovered(fn)
 	label := argExpr(1+extraSkip, "PanicsWith", 2)
 	if !panicked {
@@ -59,7 +59,7 @@ func recovered(fn func()) (value any, panicked bool) {
 // SameAt is the explicit-skip form for wrapping packages; see EqualAt.
 func SameAt(t testing.TB, extraSkip int, expected, actual any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if samePointer(expected, actual) {
 		return
 	}
@@ -70,7 +70,7 @@ func SameAt(t testing.TB, extraSkip int, expected, actual any) {
 // NotSameAt is the explicit-skip form for wrapping packages; see EqualAt.
 func NotSameAt(t testing.TB, extraSkip int, expected, actual any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if !samePointer(expected, actual) {
 		return
 	}
@@ -92,7 +92,7 @@ func samePointer(a, b any) bool {
 // ElementsMatchAt is the explicit-skip form for wrapping packages; see EqualAt.
 func ElementsMatchAt(t testing.TB, extraSkip int, listA, listB any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	a, okA := toSlice(listA)
 	b, okB := toSlice(listB)
 	label := argExpr(1+extraSkip, "ElementsMatch", 1)
@@ -143,7 +143,7 @@ func toSlice(v any) ([]any, bool) {
 // polling every tick.
 func Eventually(t testing.TB, condition func() bool, waitFor, tick time.Duration) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if pollUntil(condition, true, waitFor, tick) {
 		return
 	}
@@ -154,7 +154,7 @@ func Eventually(t testing.TB, condition func() bool, waitFor, tick time.Duration
 // waitFor, polling every tick.
 func Never(t testing.TB, condition func() bool, waitFor, tick time.Duration) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if !pollUntil(condition, true, waitFor, tick) {
 		return
 	}

@@ -33,6 +33,7 @@ func That(caller any) *Verification {
 	return core.That(caller)
 }
 
+
 // Equal fails the test when got and want are not deeply equal. On failure it
 // names what was compared (the source expression of got) and, for composite
 // values, points at the exact fields that differ.

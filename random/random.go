@@ -110,6 +110,39 @@ func ID() int {
 	return 1 + intN(1_000_000)
 }
 
+var (
+	idRecorderMu sync.RWMutex
+	idRecorder   func(string)
+)
+
+// SetIDRecorder installs a sink that is notified of every value NewID produces.
+// testigo wires this internally so its audit layer can recognize generated
+// identifiers; passing nil clears it. Consumers do not normally call this.
+func SetIDRecorder(fn func(string)) {
+	idRecorderMu.Lock()
+	idRecorder = fn
+	idRecorderMu.Unlock()
+}
+
+func recordID(id string) {
+	idRecorderMu.RLock()
+	rec := idRecorder
+	idRecorderMu.RUnlock()
+	if rec != nil {
+		rec(id)
+	}
+}
+
+// NewID returns a fresh random identifier of the form "<prefix>_<token>". Each
+// identifier it returns is reported to testigo's audit layer (see
+// SetIDRecorder), so the Variation detectors treat arguments carrying a
+// generated ID as incidental rather than as un-varied business values.
+func NewID(prefix string) string {
+	id := prefix + "_" + String(12)
+	recordID(id)
+	return id
+}
+
 // Word returns a single random lowercase word.
 func Word() string {
 	return words[intN(len(words))]

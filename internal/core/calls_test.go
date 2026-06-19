@@ -29,6 +29,64 @@ type chargeDelegate struct{ double *valueSpyDouble }
 
 func (d chargeDelegate) run(n int) { d.double.Charge(n) }
 
+func TestCalls_GroupsExpectationsUnderOneSubject(t *testing.T) {
+	double := NewDouble(t, &valueSpyDouble{})
+	delegate := chargeDelegate{double: double}
+
+	Run(t, "groups calls with a bound Called", func(t *testing.T) {
+		delegate.run(7)
+		delegate.run(9)
+
+		That(delegate).Calls(func(c *Verification) {
+			c.Called(double.Charge).WithParams(7).Once()
+			c.Called(double.Charge).WithParams(9).Once()
+		})
+		Equal(t, true, true)
+	})
+}
+
+type orderedDouble struct {
+	Spy
+}
+
+func (d *orderedDouble) A() { d.Call() }
+func (d *orderedDouble) B() { d.Call() }
+func (d *orderedDouble) C() { d.Call() }
+
+func TestCallsOrdered_PassesWhenCallsHappenInOrder(t *testing.T) {
+	d := NewDouble(t, &orderedDouble{})
+
+	Run(t, "in order", func(t *testing.T) {
+		d.A()
+		d.B()
+		d.C()
+
+		Expect(t).CallsOrdered(func(c *Verification) {
+			c.Called(d.A).Once()
+			c.Called(d.B).Once()
+			c.Called(d.C).Once()
+		})
+		Equal(t, true, true)
+	})
+}
+
+func TestCallsOrdered_FailsWhenOutOfOrder(t *testing.T) {
+	defer isolateCurrentTestRegistries()()
+	d := NewDouble(t, &orderedDouble{})
+
+	d.B()
+	d.A()
+
+	ft := &fakeT{}
+	Expect(ft).CallsOrdered(func(c *Verification) {
+		c.Called(d.A)
+		c.Called(d.B)
+	})
+	if !ft.failed {
+		t.Fatal("expected CallsOrdered to fail when B ran before A")
+	}
+}
+
 func TestShortChains_AfterDoubleWithoutRun(t *testing.T) {
 	double := NewDouble(t, &valueSpyDouble{})
 	double.Charge(3)

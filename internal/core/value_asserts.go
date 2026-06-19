@@ -11,7 +11,7 @@ import (
 // NotEqualAt is the explicit-skip form for wrapping packages; see EqualAt.
 func NotEqualAt[T any](t testing.TB, extraSkip int, got, want T) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if !reflect.DeepEqual(got, want) {
 		return
 	}
@@ -22,7 +22,7 @@ func NotEqualAt[T any](t testing.TB, extraSkip int, got, want T) {
 // NilAt is the explicit-skip form for wrapping packages; see EqualAt.
 func NilAt(t testing.TB, extraSkip int, value any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if isNil(value) {
 		return
 	}
@@ -33,7 +33,7 @@ func NilAt(t testing.TB, extraSkip int, value any) {
 // NotNilAt is the explicit-skip form for wrapping packages; see EqualAt.
 func NotNilAt(t testing.TB, extraSkip int, value any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if !isNil(value) {
 		return
 	}
@@ -44,7 +44,7 @@ func NotNilAt(t testing.TB, extraSkip int, value any) {
 // EmptyAt is the explicit-skip form for wrapping packages; see EqualAt.
 func EmptyAt(t testing.TB, extraSkip int, value any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if isEmpty(value) {
 		return
 	}
@@ -55,7 +55,7 @@ func EmptyAt(t testing.TB, extraSkip int, value any) {
 // NotEmptyAt is the explicit-skip form for wrapping packages; see EqualAt.
 func NotEmptyAt(t testing.TB, extraSkip int, value any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if !isEmpty(value) {
 		return
 	}
@@ -66,7 +66,7 @@ func NotEmptyAt(t testing.TB, extraSkip int, value any) {
 // LenAt is the explicit-skip form for wrapping packages; see EqualAt.
 func LenAt(t testing.TB, extraSkip int, object any, want int) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	label := argExpr(1+extraSkip, "Len", 1)
 	got, ok := length(object)
 	caret := caretBlock(1+extraSkip, "Len", 1)
@@ -83,7 +83,7 @@ func LenAt(t testing.TB, extraSkip int, object any, want int) {
 // ContainsAt is the explicit-skip form for wrapping packages; see EqualAt.
 func ContainsAt(t testing.TB, extraSkip int, container, element any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	found, ok := contains(container, element)
 	if ok && found {
 		return
@@ -100,7 +100,7 @@ func ContainsAt(t testing.TB, extraSkip int, container, element any) {
 // NotContainsAt is the explicit-skip form for wrapping packages; see EqualAt.
 func NotContainsAt(t testing.TB, extraSkip int, container, element any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	found, ok := contains(container, element)
 	if ok && !found {
 		return
@@ -117,7 +117,7 @@ func NotContainsAt(t testing.TB, extraSkip int, container, element any) {
 // ErrorIsAt is the explicit-skip form for wrapping packages; see EqualAt.
 func ErrorIsAt(t testing.TB, extraSkip int, err, target error) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if errors.Is(err, target) {
 		return
 	}
@@ -129,7 +129,7 @@ func ErrorIsAt(t testing.TB, extraSkip int, err, target error) {
 // ErrorAsAt is the explicit-skip form for wrapping packages; see EqualAt.
 func ErrorAsAt(t testing.TB, extraSkip int, err error, target any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if errors.As(err, target) {
 		return
 	}
@@ -145,7 +145,7 @@ func ErrorAsAt(t testing.TB, extraSkip int, err error, target any) {
 // ErrorContainsAt is the explicit-skip form for wrapping packages; see EqualAt.
 func ErrorContainsAt(t testing.TB, extraSkip int, err error, substr string) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if err != nil && strings.Contains(err.Error(), substr) {
 		return
 	}

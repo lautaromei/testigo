@@ -15,7 +15,7 @@ import (
 // EqualAt is the explicit-skip form of Equal for wrapping packages.
 func EqualAt[T any](t testing.TB, extraSkip int, got, want T) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if reflect.DeepEqual(got, want) {
 		return
 	}
@@ -50,7 +50,7 @@ func typeName(t reflect.Type) string {
 // NoErrorAt is the explicit-skip form for wrapping packages; see EqualAt.
 func NoErrorAt(t testing.TB, extraSkip int, err error) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if err == nil {
 		return
 	}
@@ -65,7 +65,7 @@ func NoErrorAt(t testing.TB, extraSkip int, err error) {
 // ErrorAt is the explicit-skip form for wrapping packages; see EqualAt.
 func ErrorAt(t testing.TB, extraSkip int, err error) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if err != nil {
 		return
 	}
@@ -80,7 +80,7 @@ func ErrorAt(t testing.TB, extraSkip int, err error) {
 // True fails the test when the condition is false.
 func True(t testing.TB, condition bool, format string, args ...any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if !condition {
 		t.Errorf(format, args...)
 	}
@@ -89,7 +89,7 @@ func True(t testing.TB, condition bool, format string, args ...any) {
 // False fails the test when the condition is true.
 func False(t testing.TB, condition bool, format string, args ...any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if condition {
 		t.Errorf(format, args...)
 	}
@@ -98,9 +98,9 @@ func False(t testing.TB, condition bool, format string, args ...any) {
 const maxDiffs = 8
 
 type valueDiff struct {
-	path string
-	got  string
-	want string
+	path  string
+	got   string
+	want  string
 	block string
 }
 

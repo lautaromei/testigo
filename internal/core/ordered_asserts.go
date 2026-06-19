@@ -47,7 +47,7 @@ func NegativeAt[T cmp.Ordered](t testing.TB, extraSkip int, got T) {
 
 func orderedAt[T any](t testing.TB, extraSkip int, fnName string, ok bool, got T, op string, want T) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if ok {
 		return
 	}
@@ -59,7 +59,7 @@ func orderedAt[T any](t testing.TB, extraSkip int, fnName string, ok bool, got T
 // InDeltaAt is the explicit-skip form for wrapping packages; see EqualAt.
 func InDeltaAt(t testing.TB, extraSkip int, got, want, delta float64) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if math.Abs(got-want) <= delta {
 		return
 	}

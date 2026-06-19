@@ -6,6 +6,7 @@ import (
 	"path"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,6 +30,7 @@ type CallRecord struct {
 	Snapshots       []any
 	Seq             uint64
 	Time            time.Time
+	GoroutineID     uint64
 }
 
 var callSeq atomic.Uint64
@@ -179,6 +181,7 @@ func (m *Spy) Call(params ...any) {
 		Snapshots:       snapshotParams(params),
 		Seq:             callSeq.Add(1),
 		Time:            time.Now(),
+		GoroutineID:     currentGoroutineID(),
 	})
 }
 
@@ -674,6 +677,7 @@ func assertOrder(a *CalledFunc, otherFn any, kind orderKind, window time.Duratio
 	if other.err != nil {
 		return false, other.err
 	}
+	auditNoteOrderAssertion()
 
 	virtualSpy, callsByFunc := collectTestCalls()
 	aCalls := virtualSpy.filterMatchingCalls(callsByFunc[a.funcName], a)
@@ -847,9 +851,21 @@ func (m *Spy) failureReport(errs []string) error {
 }
 
 func getTestID() string {
+	id := currentGoroutineID()
+	if id == 0 {
+		return ""
+	}
+	return strconv.FormatUint(id, 10)
+}
+
+func currentGoroutineID() uint64 {
 	b := make([]byte, 64)
 	b = b[:runtime.Stack(b, false)]
 	b = bytes.TrimPrefix(b, []byte("goroutine "))
 	b = b[:bytes.IndexByte(b, ' ')]
-	return string(b)
+	id, err := strconv.ParseUint(string(b), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return id
 }

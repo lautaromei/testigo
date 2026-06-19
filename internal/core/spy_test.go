@@ -211,6 +211,12 @@ func (f *fakeT) runCleanups() {
 	}
 }
 
+func (f *fakeT) runCleanupsLIFO() {
+	for i := len(f.cleanups) - 1; i >= 0; i-- {
+		f.cleanups[i]()
+	}
+}
+
 func (f *fakeT) Error(args ...any) {
 	f.failed = true
 	f.message = fmt.Sprint(args...)

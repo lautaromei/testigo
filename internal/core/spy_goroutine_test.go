@@ -107,6 +107,36 @@ func TestNewDoubleSpyVisibleFromWorkerGoroutine(t *testing.T) {
 	}
 }
 
+func TestCallRecordStoresCallingGoroutineID(t *testing.T) {
+	subject := NewDouble(t, &TestSubject{spy: &Spy{}})
+	testGoroutineID := currentGoroutineID()
+
+	var wg sync.WaitGroup
+	workerGoroutineID := make(chan uint64, 1)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		workerGoroutineID <- currentGoroutineID()
+		subject.DoSomething("hello", 123)
+	}()
+	wg.Wait()
+
+	if got := len(subject.spy.calls); got != 1 {
+		t.Fatalf("expected one recorded call, got %d", got)
+	}
+	want := <-workerGoroutineID
+	got := subject.spy.calls[0].GoroutineID
+	if got == 0 {
+		t.Fatal("expected call record to include a goroutine id")
+	}
+	if got != want {
+		t.Fatalf("expected call goroutine id %d, got %d", want, got)
+	}
+	if got == testGoroutineID {
+		t.Fatalf("expected worker call to keep worker goroutine id, got test goroutine id %d", got)
+	}
+}
+
 // TestNewDoubleSpyVisibleFromSubtest checks the ownership walks up: the double
 // is registered on the parent test, the worker call happens during a
 // testigo.Run subtest, and the subtest's assertion still sees it.

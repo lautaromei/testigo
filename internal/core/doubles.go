@@ -67,6 +67,7 @@ func NewDouble[T any](t *testing.T, double *T) *T {
 	recordDouble(t, reflect.ValueOf(double))
 	registerDoubleSpies(t, double)
 	t.Cleanup(bindGoroutine(t))
+	auditArm(t)
 
 	_, isResetter := any(double).(Resetter)
 	// An external-state double resets through Reset alone: copying its fields
@@ -105,6 +106,7 @@ func Run(t *testing.T, name string, testFunc func(t *testing.T)) {
 				t.Logf("testigo: re-run with TESTIGO_SEED=%s to reproduce this run's random values", random.Phrase())
 			}
 		})
+		auditArm(t)
 		armFinalCheck(t)
 		testFunc(t)
 	})

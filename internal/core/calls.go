@@ -16,6 +16,7 @@ import (
 // Times, Never or AtLeastOnce); at test end testigo also flags any recorded
 // call left unverified.
 func Expect(t testing.TB) *Verification {
+	auditArm(t)
 	return &Verification{t: t}
 }
 
@@ -41,6 +42,16 @@ type Verification struct {
 	t         testing.TB
 	caller    any
 	hasCaller bool
+
+	// ordered, set by CallsOrdered, makes Called record each expectation in
+	// seq so the surrounding group can assert they happened in that order.
+	ordered bool
+	seq     []orderedCall
+}
+
+type orderedCall struct {
+	exp *CalledFunc
+	fn  any
 }
 
 // That sets the expected caller of the upcoming Called.
@@ -53,7 +64,7 @@ func (v *Verification) That(caller any) *Verification {
 // DidChange asserts the double named by That changed since NewDouble registered it.
 func (v *Verification) DidChange() {
 	v.t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(v.t)
 	if !changed(v.registeredDouble()) {
 		v.t.Errorf("expected %s'%s'%s to change, but it is unchanged", bold, doubleName(v.registeredDouble()), reset)
 	}
@@ -62,7 +73,7 @@ func (v *Verification) DidChange() {
 // DidNotChange asserts the double named by That is unchanged since NewDouble.
 func (v *Verification) DidNotChange() {
 	v.t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(v.t)
 	if changed(v.registeredDouble()) {
 		v.t.Errorf("expected %s'%s'%s to stay unchanged, but it changed", bold, doubleName(v.registeredDouble()), reset)
 	}
@@ -72,7 +83,7 @@ func (v *Verification) DidNotChange() {
 // NewDouble captured; pass a pointer to the field (&double.field).
 func (v *Verification) Changed(fieldPtr any) *FieldChange {
 	v.t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(v.t)
 	rec := v.registeredDouble()
 	name, initial, current, ok := fieldStateByPtr(rec, fieldPtr)
 	fc := &FieldChange{t: v.t, double: doubleName(rec), field: name, initial: initial, current: current, found: ok}
@@ -141,7 +152,52 @@ func (v *Verification) Called(function any) *PendingCall {
 	exp.site, exp.siteFile, exp.siteLine = callerSite()
 	p := &PendingCall{t: v.t, exp: exp}
 	registerForFinalCheck(v.t, p)
+	if v.ordered {
+		v.seq = append(v.seq, orderedCall{exp: exp, fn: function})
+	}
 	return p
+}
+
+// Calls names the subject once and groups several call expectations. The
+// closure receives c, the verification already bound to the subject, so each
+// line reads c.Called(method)... without repeating That(subject):
+//
+//	assert.That(h.Subject).Calls(func(c *assert.Verification) {
+//		c.Called(h.Repo.Get).WithParams(ctx, id)
+//		c.Called(h.Notifier.Sent).Once()
+//		c.Called(h.Repo.Delete).Never()
+//	})
+//
+// Each c.Called(...) behaves exactly as assert.That(subject).Called(...). The
+// expectations are order-independent; use CallsOrdered to also assert sequence.
+func (v *Verification) Calls(fn func(c *Verification)) {
+	v.t.Helper()
+	fn(&Verification{t: v.t, caller: v.caller, hasCaller: v.hasCaller})
+}
+
+// CallsOrdered behaves like Calls but additionally asserts the c.Called(...)
+// lines happened in the written order. Ordering uses testigo's global call
+// sequence, so it holds across different doubles too. Each call is verified
+// before the next: the last matching call of line i must precede the first
+// call of line i+1.
+//
+//	assert.That(h.Subject).CallsOrdered(func(c *assert.Verification) {
+//		c.Called(h.Repo.Get).WithParams(ctx, id)
+//		c.Called(h.Repo.Create).WithParams(ctx, row)
+//		c.Called(h.Notifier.Sent).WithParams(ctx, row)
+//	})
+//
+// Caveat: Before semantics compare all calls of one method to all of the next,
+// so ordering is unambiguous only when each method is expected once.
+func (v *Verification) CallsOrdered(fn func(c *Verification)) {
+	v.t.Helper()
+	c := &Verification{t: v.t, caller: v.caller, hasCaller: v.hasCaller, ordered: true}
+	fn(c)
+	for i := 0; i+1 < len(c.seq); i++ {
+		if ok, err := assertOrder(c.seq[i].exp, c.seq[i+1].fn, orderBefore, 0); !ok {
+			c.t.Fatal(err)
+		}
+	}
 }
 
 func callerSite() (site, file string, line int) {
@@ -274,15 +330,18 @@ func armFinalCheck(t testing.TB) *testVerifier {
 	val, loaded := testVerifiers.LoadOrStore(testID, &testVerifier{})
 	tv := val.(*testVerifier)
 	if !loaded {
-		t.Cleanup(func() {
-			testVerifiers.Delete(testID)
+		if !tryCleanup(t, func() {
 			finalCheck(t, tv)
-		})
+		}) {
+			testVerifiers.Delete(testID)
+			return nil
+		}
 	}
 	return tv
 }
 
 func registerForFinalCheck(t testing.TB, p *PendingCall) {
+	auditArm(t)
 	tv := armFinalCheck(t)
 	if tv == nil {
 		return
@@ -293,15 +352,15 @@ func registerForFinalCheck(t testing.TB, p *PendingCall) {
 	tv.mu.Unlock()
 }
 
-func noteValueAssertion() {
-	if testID := getTestID(); testID != "" {
-		if val, ok := testVerifiers.Load(testID); ok {
-			tv := val.(*testVerifier)
-			tv.mu.Lock()
-			tv.valueAsserts++
-			tv.mu.Unlock()
-		}
+func noteValueAssertion(t testing.TB) {
+	auditArm(t)
+	tv := armFinalCheck(t)
+	if tv == nil {
+		return
 	}
+	tv.mu.Lock()
+	tv.valueAsserts++
+	tv.mu.Unlock()
 }
 
 func finalCheck(t testing.TB, tv *testVerifier) {
@@ -322,6 +381,10 @@ func finalCheck(t testing.TB, tv *testVerifier) {
 	}
 
 	if t.Failed() {
+		return
+	}
+
+	if len(exps) == 0 {
 		return
 	}
 

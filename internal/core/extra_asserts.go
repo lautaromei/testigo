@@ -15,7 +15,7 @@ import (
 // int64(5), or 5 and 5.0).
 func SoftEqualAt(t testing.TB, extraSkip int, got, want any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if equalValues(got, want) {
 		return
 	}
@@ -64,7 +64,7 @@ func isNumericType(t reflect.Type) bool {
 // ZeroAt is the explicit-skip form for wrapping packages; see EqualAt.
 func ZeroAt(t testing.TB, extraSkip int, value any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if isZero(value) {
 		return
 	}
@@ -75,7 +75,7 @@ func ZeroAt(t testing.TB, extraSkip int, value any) {
 // NotZeroAt is the explicit-skip form for wrapping packages; see EqualAt.
 func NotZeroAt(t testing.TB, extraSkip int, value any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if !isZero(value) {
 		return
 	}
@@ -96,7 +96,7 @@ func isZero(v any) bool {
 // be a string, []byte or fmt.Stringer.
 func RegexpAt(t testing.TB, extraSkip int, pattern, value any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	label := argExpr(1+extraSkip, "Regexp", 1)
 	caret := caretBlock(1+extraSkip, "Regexp", 1)
 	re, err := compileRegexp(pattern)
@@ -113,7 +113,7 @@ func RegexpAt(t testing.TB, extraSkip int, pattern, value any) {
 // NotRegexpAt is the explicit-skip form for wrapping packages; see EqualAt.
 func NotRegexpAt(t testing.TB, extraSkip int, pattern, value any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	label := argExpr(1+extraSkip, "NotRegexp", 1)
 	caret := caretBlock(1+extraSkip, "NotRegexp", 1)
 	re, err := compileRegexp(pattern)
@@ -159,7 +159,7 @@ func regexpSubject(value any) string {
 // every key/value pair (for maps) of subset.
 func SubsetAt(t testing.TB, extraSkip int, list, subset any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	label := argExpr(1+extraSkip, "Subset", 1)
 	caret := caretBlock(1+extraSkip, "Subset", 1)
 	missing, ok := subsetMissing(list, subset)
@@ -176,7 +176,7 @@ func SubsetAt(t testing.TB, extraSkip int, list, subset any) {
 // NotSubsetAt is the explicit-skip form for wrapping packages; see EqualAt.
 func NotSubsetAt(t testing.TB, extraSkip int, list, subset any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	label := argExpr(1+extraSkip, "NotSubset", 1)
 	caret := caretBlock(1+extraSkip, "NotSubset", 1)
 	missing, ok := subsetMissing(list, subset)
@@ -238,7 +238,7 @@ func containsElem(list []any, element any) bool {
 // It fails when object's dynamic type differs from expectedType's.
 func IsTypeAt(t testing.TB, extraSkip int, expectedType, object any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if reflect.TypeOf(object) == reflect.TypeOf(expectedType) {
 		return
 	}
@@ -252,7 +252,7 @@ func IsTypeAt(t testing.TB, extraSkip int, expectedType, object any) {
 // It fails when err is nil or its message is not exactly want.
 func EqualErrorAt(t testing.TB, extraSkip int, err error, want string) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if err != nil && err.Error() == want {
 		return
 	}
@@ -267,7 +267,7 @@ func EqualErrorAt(t testing.TB, extraSkip int, err error, want string) {
 // with an error whose message is not want.
 func PanicsWithErrorAt(t testing.TB, extraSkip int, want string, fn func()) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	value, panicked := recovered(fn)
 	label := argExpr(1+extraSkip, "PanicsWithError", 2)
 	if !panicked {
@@ -288,7 +288,7 @@ func PanicsWithErrorAt(t testing.TB, extraSkip int, want string, fn func()) {
 // NotErrorIsAt is the explicit-skip form for wrapping packages; see EqualAt.
 func NotErrorIsAt(t testing.TB, extraSkip int, err, target error) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if !errors.Is(err, target) {
 		return
 	}
@@ -300,7 +300,7 @@ func NotErrorIsAt(t testing.TB, extraSkip int, err, target error) {
 // NotErrorAsAt is the explicit-skip form for wrapping packages; see EqualAt.
 func NotErrorAsAt(t testing.TB, extraSkip int, err error, target any) {
 	t.Helper()
-	noteValueAssertion()
+	noteValueAssertion(t)
 	if !errors.As(err, target) {
 		return
 	}
