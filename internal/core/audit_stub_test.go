@@ -30,6 +30,48 @@ func TestOutcomeUnderCoverDetector(t *testing.T) {
 	}
 }
 
+func TestOutcomeUnpinnedDetector(t *testing.T) {
+	d := outcomeUnpinnedDetector{}
+	a := &acc{methods: map[string]*methodStat{
+		"pkg.Repo.Save": {observed: 1, asserted: true, returnCount: 2},
+		"pkg.Repo.Get":  {observed: 1, asserted: true, returnCount: 1},
+		"pkg.Log.Debug": {observed: 1, asserted: true, returnCount: 0},
+	}}
+
+	findings := d.inspect(a)
+	if got := sites(findings); len(got) != 2 || !got["pkg.Repo.Save"] || !got["pkg.Repo.Get"] {
+		t.Fatalf("expected returning methods to be flagged, got %+v", got)
+	}
+
+	a.valueAsserts = 1
+	findings = d.inspect(a)
+	if got := sites(findings); len(got) != 1 || !got["pkg.Repo.Save"] {
+		t.Fatalf("expected only method needing two outcome assertions, got %+v", got)
+	}
+
+	a.valueAsserts = 2
+	if findings := d.inspect(a); len(findings) != 0 {
+		t.Fatalf("enough value assertions should silence detector, got %+v", findings)
+	}
+}
+
+func TestDiscardedReturnDetector(t *testing.T) {
+	d := discardedReturnDetector{}
+	a := &acc{discardedReturns: []ignoredReturn{
+		{file: "repo_test.go", line: 12, src: "got, _ := subject.Save()", method: "pkg.Repo.Save"},
+		{file: "repo_test.go", line: 12, src: "got, _ := subject.Save()", method: "pkg.Repo.Save"},
+		{file: "repo_test.go", line: 18, src: "_, err := subject.Get()", method: "pkg.Repo.Get"},
+	}}
+
+	findings := d.inspect(a)
+	if got := sites(findings); len(got) != 2 || !got["pkg.Repo.Save"] || !got["pkg.Repo.Get"] {
+		t.Fatalf("expected one finding per discarded-return method, got %+v", got)
+	}
+	if findings[0].rule != "discarded-return" || findings[0].kind != scored {
+		t.Fatalf("unexpected finding: %+v", findings[0])
+	}
+}
+
 func TestErrorPathUnexercisedDetector(t *testing.T) {
 	d := errorPathUnexercisedDetector{}
 	a := &acc{methods: map[string]*methodStat{

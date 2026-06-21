@@ -19,7 +19,7 @@ func (duplicateTestCaseDetector) odc() ODC {
 	}
 }
 
-func (duplicateTestCaseDetector) kind() findingKind { return scored }
+func (duplicateTestCaseDetector) kind() findingKind { return hazard }
 
 func (d duplicateTestCaseDetector) inspect(a *acc) []scoredFinding {
 	a.mu.Lock()
@@ -57,7 +57,7 @@ func (d duplicateTestCaseDetector) inspect(a *acc) []scoredFinding {
 			rule:       d.name(),
 			kind:       d.kind(),
 			odc:        d.odc(),
-			score:      0.61,
+			score:      1,
 			observable: true,
 			site:       duplicateTestCaseSite(group),
 			message: fmt.Sprintf(

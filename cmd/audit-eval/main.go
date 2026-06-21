@@ -40,14 +40,14 @@ var experimentalRules = map[string]bool{
 	"unpinned-arg": true,
 }
 
-// argOperator maps argument-level detectors to the srcmut operator that
-// validates them (AUDIT_PLAN §9). Both predict that changing an argument value
-// survives — unpinned-arg because no value is pinned, literal-pinned-once
-// because the single observed value is never varied — so both are validated by
-// ARG_CORRUPT (replacing the argument with its zero value).
-var argOperator = map[string]srcmut.Operator{
+// srcOperator maps source-level detectors to the srcmut operator that validates
+// them (AUDIT_PLAN §9). Argument detectors align by argument index; return
+// detectors align by callee method.
+var srcOperator = map[string]srcmut.Operator{
 	"unpinned-arg":        srcmut.ArgCorrupt, // detector 2 — value unconstrained (experimental: noisy)
 	"argument-swap-blind": srcmut.ArgSwap,    // wrong-variable / swapped-arg (keyed by method)
+	"outcome-unpinned":    srcmut.ReturnCorrupt,
+	"discarded-return":    srcmut.ReturnCorrupt,
 }
 
 // boundaryOperator maps each detector rule to the boundary mutation operator
@@ -158,6 +158,12 @@ func main() {
 				samples = append(samples, eval.Sample{Rule: "unpinned-arg", Score: pi.argScore(m.Method, m.ArgIndex), Survived: m.Status == srcmut.Lived, Observable: true})
 				covered[predKey("unpinned-arg", m.Method, m.ArgIndex)] = true
 				pkgSamples++
+			case srcmut.ReturnCorrupt:
+				for _, rule := range []string{"outcome-unpinned", "discarded-return"} {
+					samples = append(samples, eval.Sample{Rule: rule, Score: pi.returnScore(rule, m.Method), Survived: m.Status == srcmut.Lived, Observable: true})
+					covered[predKey(rule, m.Method, -1)] = true
+					pkgSamples++
+				}
 			default:
 				if m.Status == srcmut.Lived {
 					uncoveredSurvivors++
@@ -263,9 +269,9 @@ func gate(samples []eval.Sample, maxMAE, minPrec float64) int {
 }
 
 // isValidatedRule reports whether a detector has an oracle this harness scores
-// it against (an active boundary operator, or one of the arg detectors).
+// it against (an active boundary operator or srcmut operator).
 func isValidatedRule(rule string) bool {
-	if rule == "argument-swap-blind" || rule == "unpinned-arg" {
+	if rule == "argument-swap-blind" || rule == "unpinned-arg" || rule == "outcome-unpinned" || rule == "discarded-return" {
 		return true
 	}
 	for _, r := range boundaryRuleFor {
@@ -286,6 +292,7 @@ type predictionIndex struct {
 	boundary map[string]map[string]float64 // rule -> method -> score
 	arg      map[string]float64            // "method\x00idx" -> score (unpinned-arg)
 	swap     map[string]float64            // method -> score (argument-swap-blind)
+	ret      map[string]map[string]float64 // rule -> method -> score (return-corruption detectors)
 }
 
 func newPredictionIndex(findings []exportedFinding) predictionIndex {
@@ -293,6 +300,7 @@ func newPredictionIndex(findings []exportedFinding) predictionIndex {
 		boundary: map[string]map[string]float64{},
 		arg:      map[string]float64{},
 		swap:     map[string]float64{},
+		ret:      map[string]map[string]float64{},
 	}
 	for _, f := range findings {
 		if f.Kind != "scored" {
@@ -312,6 +320,13 @@ func newPredictionIndex(findings []exportedFinding) predictionIndex {
 			k := fmt.Sprintf("%s\x00%d", method, idx)
 			if f.Score > pi.arg[k] {
 				pi.arg[k] = f.Score
+			}
+		case f.Rule == "outcome-unpinned" || f.Rule == "discarded-return":
+			if pi.ret[f.Rule] == nil {
+				pi.ret[f.Rule] = map[string]float64{}
+			}
+			if f.Score > pi.ret[f.Rule][method] {
+				pi.ret[f.Rule][method] = f.Score
 			}
 		default:
 			if _, ok := boundaryOperator[f.Rule]; ok {
@@ -333,6 +348,9 @@ func (pi predictionIndex) boundaryScore(rule, method string) float64 {
 func (pi predictionIndex) swapScore(method string) float64 { return pi.swap[method] }
 func (pi predictionIndex) argScore(method string, idx int) float64 {
 	return pi.arg[fmt.Sprintf("%s\x00%d", method, idx)]
+}
+func (pi predictionIndex) returnScore(rule, method string) float64 {
+	return pi.ret[rule][method]
 }
 
 // boundaryMutants / argMutants run the oracles and return the raw covered
@@ -435,8 +453,6 @@ func siteArgIndex(site string) (int, bool) {
 var neededOracle = map[string]string{
 	"boundary-blind":         "relational-flip (gremlins)",
 	"unpinned-arg":           "arg-corruption mutator",
-	"outcome-unpinned":       "return-corruption mutator",
-	"discarded-return":       "return-corruption mutator",
 	"error-path-unexercised": "force-error mutator",
 	"outcome-under-cover":    "branch-removal mutator",
 	"overwrite-dead-store":   "dead-store-delete mutator",

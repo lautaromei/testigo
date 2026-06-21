@@ -6,6 +6,7 @@ import (
 	"os/exec"
 
 	"github.com/lautaromei/testigo/internal/checkedcovssa"
+	"github.com/lautaromei/testigo/internal/edgecovssa"
 )
 
 func main() {
@@ -32,6 +33,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			exitCode = 1
 		}
+	case "edgecov":
+		if err := edgecovssa.Run(target); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			exitCode = 1
+		}
 	default:
 		usage()
 	}
@@ -42,7 +48,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: testigo <audit|checkedcov> <package-dir>")
+	fmt.Fprintln(os.Stderr, "usage: testigo <audit|checkedcov|edgecov> <package-dir>")
 	os.Exit(2)
 }
 

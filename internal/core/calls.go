@@ -404,9 +404,10 @@ func finalCheck(t testing.TB, tv *testVerifier) {
 }
 
 type ignoredReturn struct {
-	file string
-	line int
-	src  string
+	file   string
+	line   int
+	src    string
+	method string
 }
 
 func ignoredReturnedValues(exps []*CalledFunc) []ignoredReturn {
@@ -429,7 +430,7 @@ func ignoredReturnedValues(exps []*CalledFunc) []ignoredReturn {
 				key := fmt.Sprintf("%s:%d", exp.siteFile, i+1)
 				if !seen[key] {
 					seen[key] = true
-					ignored = append(ignored, ignoredReturn{file: path.Base(exp.siteFile), line: i + 1, src: trimmed})
+					ignored = append(ignored, ignoredReturn{file: path.Base(exp.siteFile), line: i + 1, src: trimmed, method: exp.displayName()})
 				}
 			}
 		}

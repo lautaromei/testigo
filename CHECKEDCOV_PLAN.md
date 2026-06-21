@@ -122,6 +122,36 @@ si el helper termina llamando a `t.Fatal` (el slice interprocedural ya lo sigue)
   unchecked (correcto: no verifica outcome).
 - ❌ golden-file / snapshot asserts que comparan bytes leídos de disco — semilla
   llega al read, no al valor lógico (limitación conocida, documentar).
+- ❌ **round-trip de serialización** (`json.Encode(w/buf, v)` → `[]byte` →
+  `Unmarshal(...,&out)` → assert `out.ID`). La línea del `Encode` queda flagueada
+  unchecked aunque el body SÍ se asevera. Misma clase que golden-file. **Causa
+  verificada** (fixture sin net/http, 2026-06-21): raw `buf.Write(b)`+`buf.Bytes()`
+  SÍ conecta (checked); solo rompe el round-trip de `encoding/json`. Encode/Unmarshal
+  escriben vía **reflection**, no son field-stores rastreables → la identidad lógica
+  se pierde cruzando la frontera `[]byte`. No es net/http ni el buffer. Fix genérico
+  imposible sin modelar la semántica de json (`Unmarshal(Marshal(v)) ≡ v` field-a-field);
+  sería special-case de encoding/json (+gob/xml), no genérico.
+  - Nota http: en `writeJSON` las líneas igual quedan checked por el path Code/status
+    (`WriteHeader`, resuelto por dispatch acotado SUT+test); solo el `Encode` body-only
+    (server.go:147) cae en este gap.
+
+### Resolución de dispatch dinámico (interfaces / doubles) — implementado 2026-06-21
+
+El slice moría en `StaticCallee()==nil` (interface invoke, func-value), ciego al
+código alcanzado solo por dispatch (doubles inyectados, `http.ResponseWriter`).
+
+- **Descartado: RTA whole-program** (`callgraph/rta`). Desde test entries alcanza
+  `testing→reflect→runtime`; su modelado de reflection explota → colgó 120s en
+  fixture mínimo, OOM en httpapi (pgx/testcontainers). Wrong tool.
+- **Shipped: resolución acotada a scope SUT+test** (`resolveDynamicCallees`): junta
+  los tipos concretos que el suite mete en interfaces (`*ssa.MakeInterface` en scope)
+  y resuelve cada invoke vía `prog.MethodSets.MethodSet(t).Lookup` + `MethodValue`.
+  Costo `|invokes|×|tipos|`, sin reflection, sin fixpoint. `callArg` maneja
+  receiver-como-param0 y desenvuelve el boxing `MakeInterface`. Aplicado en
+  `checkedcovssa` y `edgecovssa` (este último delega `checked` a checkedcov, así que
+  el fix se comparte; solo reemplazó su RTA propio en `analyzeReachability`).
+- Resultado httpapi: clase FP dominante `writeJSON` covered-unchecked **eliminada**
+  (vía path Code). ~9-60s según deps, sin OOM.
 
 ---
 

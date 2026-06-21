@@ -53,6 +53,115 @@ func (d outcomeUnderCoverDetector) inspect(a *acc) []scoredFinding {
 	return findings
 }
 
+type outcomeUnpinnedDetector struct{}
+
+func (outcomeUnpinnedDetector) name() string { return "outcome-unpinned" }
+
+func (outcomeUnpinnedDetector) odc() ODC {
+	return ODC{Type: "Checking", Trigger: "Coverage", Qualifier: "Missing", Impact: "Reliability"}
+}
+
+func (outcomeUnpinnedDetector) kind() findingKind { return scored }
+
+// inspect flags verified calls whose returned outcomes are not backed by enough
+// suite-level value/state assertions. This complements the boundary detectors:
+// the interaction happened, but corrupting the returned value can still survive.
+func (d outcomeUnpinnedDetector) inspect(a *acc) []scoredFinding {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	type site struct {
+		method      string
+		returnCount int
+	}
+	var sites []site
+	for method, stat := range a.methods {
+		if !stat.asserted || stat.returnCount == 0 || a.valueAsserts >= stat.returnCount {
+			continue
+		}
+		sites = append(sites, site{method: method, returnCount: stat.returnCount})
+	}
+	sort.Slice(sites, func(i, j int) bool { return sites[i].method < sites[j].method })
+
+	findings := make([]scoredFinding, 0, len(sites))
+	for _, site := range sites {
+		findings = append(findings, scoredFinding{
+			rule:       d.name(),
+			kind:       d.kind(),
+			odc:        d.odc(),
+			score:      0.70,
+			observable: true,
+			site:       site.method,
+			message:    fmt.Sprintf("%s returns %d value(s), but the suite only made %d value/state assertion(s); return corruption can survive", site.method, site.returnCount, a.valueAsserts),
+			fix: aiFix{
+				Problem:      "returned_outcome_not_pinned",
+				SuggestedFix: "Capture and assert each returned outcome from the subject call, including both success values and errors.",
+			},
+		})
+	}
+	return findings
+}
+
+type discardedReturnDetector struct{}
+
+func (discardedReturnDetector) name() string { return "discarded-return" }
+
+func (discardedReturnDetector) odc() ODC {
+	return ODC{Type: "Checking", Trigger: "Coverage", Qualifier: "Missing", Impact: "Reliability"}
+}
+
+func (discardedReturnDetector) kind() findingKind { return scored }
+
+// inspect promotes the existing runtime warning for `_`-discarded subject
+// returns into a suite audit finding. A discarded return has no assertion site,
+// so return-corruption mutants can survive even when the interaction is pinned.
+func (d discardedReturnDetector) inspect(a *acc) []scoredFinding {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	seen := map[string]bool{}
+	var ignored []ignoredReturn
+	for _, item := range a.discardedReturns {
+		key := fmt.Sprintf("%s:%d:%s", item.file, item.line, item.method)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		ignored = append(ignored, item)
+	}
+	sort.Slice(ignored, func(i, j int) bool {
+		if ignored[i].method != ignored[j].method {
+			return ignored[i].method < ignored[j].method
+		}
+		if ignored[i].file != ignored[j].file {
+			return ignored[i].file < ignored[j].file
+		}
+		return ignored[i].line < ignored[j].line
+	})
+
+	findings := make([]scoredFinding, 0, len(ignored))
+	for _, item := range ignored {
+		site := item.method
+		if site == "" {
+			site = fmt.Sprintf("%s:%d", item.file, item.line)
+		}
+		findings = append(findings, scoredFinding{
+			rule:       d.name(),
+			kind:       d.kind(),
+			odc:        d.odc(),
+			score:      0.73,
+			observable: true,
+			site:       site,
+			message:    fmt.Sprintf("%s discards returned value(s) at %s:%d: %s", site, item.file, item.line, item.src),
+			fix: aiFix{
+				Problem:      "discarded_subject_return_value",
+				SuggestedFix: "Replace _ with a named variable and assert it, or explicitly assert that the discarded outcome is irrelevant.",
+			},
+		})
+	}
+	return findings
+}
+
 type looseCountDetector struct{}
 
 func (looseCountDetector) name() string { return "loose-count" }

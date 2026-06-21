@@ -4,9 +4,14 @@
 // the relational detectors but never the interaction detectors testigo targets.
 // This package adds the missing operator classes:
 //
-//	DROP_CALL  — delete a call statement      (validates drop-call / drop-emit: detectors 6, 9)
-//	DUP_CALL   — duplicate a call statement    (validates dup-call: detector 4)
-//	SWAP_CALL  — swap two adjacent call stmts  (validates reorder: detector 7)
+//	DROP_CALL     — delete a call statement      (validates drop-call / drop-emit: detectors 6, 9)
+//	DROP_EVENT    — drop a call but blank its args (validates effect-reached-unchecked:
+//	                edgecov; viable where DROP_CALL leaves the produced value orphaned)
+//	DUP_CALL      — duplicate a call statement    (validates dup-call: detector 4)
+//	SWAP_CALL     — swap two adjacent call stmts  (validates reorder: detector 7)
+//	REWIRE_CALLEE — swap the callee of two adjacent calls, args fixed (validates
+//	                edge-not-observed: edgecov; redirects edge A→t1 to A→t2 — the
+//	                wrong-target fault an unobserved edge predicts no test catches)
 //
 // It mutates one covered call statement at a time, runs the package's test
 // suite, and records whether the mutant was KILLED (a test failed) or LIVED (a
@@ -35,16 +40,19 @@ import (
 type Operator string
 
 const (
-	DropCall Operator = "DROP_CALL"
-	DupCall  Operator = "DUP_CALL"
-	SwapCall Operator = "SWAP_CALL"
+	DropCall     Operator = "DROP_CALL"
+	DropEvent    Operator = "DROP_EVENT"
+	DupCall      Operator = "DUP_CALL"
+	SwapCall     Operator = "SWAP_CALL"
+	RewireCallee Operator = "REWIRE_CALLEE"
 )
 
 // Status is the oracle label for a mutant.
 type Status string
 
 const (
-	Killed     Status = "KILLED"      // a test failed → the mutant was caught
+	Killed     Status = "KILLED"      // an assertion failed → the mutant was caught
+	Crashed    Status = "CRASHED"     // killed only by a panic/timeout, not an assertion
 	Lived      Status = "LIVED"       // tests passed → surviving mutant (a gap)
 	NotViable  Status = "NOT_VIABLE"  // mutated source failed to compile
 	NotCovered Status = "NOT_COVERED" // site is not executed by any test
@@ -86,12 +94,20 @@ type site struct {
 	column   int
 	method   string
 	hasNext  bool // next sibling is also a call statement (enables SWAP)
+	bareCall bool // statement is a bare ExprStmt call (enables DROP_EVENT)
 }
 
 // Options configures a run.
 type Options struct {
 	Dir     string        // package directory to mutate
 	Timeout time.Duration // per-mutant test timeout (default 60s)
+
+	// ProjectRoot, when set, judges each mutant against the whole project test
+	// suite (`go test ./...` from the module root with project-wide coverage)
+	// instead of only Dir's own package. This catches orchestration mutants that
+	// a cross-package integration test kills — the per-package suite would miss
+	// them and mislabel the mutant LIVED.
+	ProjectRoot string
 }
 
 // Run enumerates and evaluates boundary mutants for the package in opts.Dir.
@@ -108,6 +124,17 @@ func Run(opts Options) (Result, error) {
 		opts.Timeout = 60 * time.Second
 	}
 
+	// Resolve the test scope: per-package (`.` in Dir) or project-wide
+	// (`./...` from the module root).
+	testDir, pattern, coverpkg := dir, ".", ""
+	if opts.ProjectRoot != "" {
+		root, err := filepath.Abs(opts.ProjectRoot)
+		if err != nil {
+			return Result{}, err
+		}
+		testDir, pattern, coverpkg = root, "./...", "./..."
+	}
+
 	files, err := goSourceFiles(dir)
 	if err != nil {
 		return Result{}, err
@@ -116,7 +143,7 @@ func Run(opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("no non-test .go files in %s", dir)
 	}
 
-	covered, err := coveredLines(dir, opts.Timeout)
+	covered, err := coveredLines(testDir, pattern, coverpkg, opts.Timeout)
 	if err != nil {
 		return Result{}, fmt.Errorf("coverage: %w", err)
 	}
@@ -149,8 +176,11 @@ func Run(opts Options) (Result, error) {
 	res := Result{Package: dir}
 	for _, s := range sites {
 		ops := []Operator{DropCall, DupCall}
+		if s.bareCall {
+			ops = append(ops, DropEvent)
+		}
 		if s.hasNext {
-			ops = append(ops, SwapCall)
+			ops = append(ops, SwapCall, RewireCallee)
 		}
 		for _, op := range ops {
 			m := Mutant{File: s.base, Line: s.line, Column: s.column, Operator: op, Method: s.method}
@@ -168,7 +198,7 @@ func Run(opts Options) (Result, error) {
 			if err := os.WriteFile(s.absFile, mutated, 0o644); err != nil {
 				return res, err
 			}
-			m.Status = runSuite(dir, opts.Timeout)
+			m.Status = runSuite(testDir, pattern, opts.Timeout)
 			_ = os.WriteFile(s.absFile, originals[s.absFile], 0o644) // restore between mutants
 			res.Mutants = append(res.Mutants, m)
 		}
@@ -248,6 +278,40 @@ func stmtCallee(s ast.Stmt) (string, bool) {
 	return "", false
 }
 
+// exprStmtCall returns the CallExpr of a bare expression-statement call, or nil
+// if the statement is not of that form. These are the sites DROP_EVENT targets.
+func exprStmtCall(s ast.Stmt) *ast.CallExpr {
+	if es, ok := s.(*ast.ExprStmt); ok {
+		if call, ok := es.X.(*ast.CallExpr); ok {
+			return call
+		}
+	}
+	return nil
+}
+
+// stmtCall returns the primary CallExpr carried by a statement in the same idioms
+// stmtCallee recognizes (bare call, go/defer, error-checked if-init), or nil. It
+// gives REWIRE_CALLEE the handle to swap a call's Fun expression in place.
+func stmtCall(s ast.Stmt) *ast.CallExpr {
+	switch x := s.(type) {
+	case *ast.ExprStmt:
+		if call, ok := x.X.(*ast.CallExpr); ok {
+			return call
+		}
+	case *ast.GoStmt:
+		return x.Call
+	case *ast.DeferStmt:
+		return x.Call
+	case *ast.IfStmt:
+		if as, ok := x.Init.(*ast.AssignStmt); ok && len(as.Rhs) == 1 {
+			if call, ok := as.Rhs[0].(*ast.CallExpr); ok {
+				return call
+			}
+		}
+	}
+	return nil
+}
+
 func calleeName(call *ast.CallExpr) string {
 	switch f := call.Fun.(type) {
 	case *ast.SelectorExpr:
@@ -283,6 +347,7 @@ func enumerate(absFile string, src []byte) ([]site, error) {
 				column:   pos.Column,
 				method:   method,
 				hasNext:  hasNext,
+				bareCall: exprStmtCall(stmt) != nil,
 			})
 		}
 	}
@@ -316,6 +381,23 @@ func apply(s site, op Operator, src []byte) ([]byte, bool) {
 	switch op {
 	case DropCall:
 		b.List = append(b.List[:s.stmtIdx:s.stmtIdx], b.List[s.stmtIdx+1:]...)
+	case DropEvent:
+		// Drop the call's effect but keep the source compilable by consuming the
+		// argument expressions through blanks. This reaches writeJSON-style sites
+		// whose produced value would be left orphaned by a plain DROP_CALL.
+		call := exprStmtCall(b.List[s.stmtIdx])
+		if call == nil {
+			return nil, false
+		}
+		if len(call.Args) == 0 {
+			b.List = append(b.List[:s.stmtIdx:s.stmtIdx], b.List[s.stmtIdx+1:]...)
+			break
+		}
+		lhs := make([]ast.Expr, len(call.Args))
+		for i := range call.Args {
+			lhs[i] = ast.NewIdent("_")
+		}
+		b.List[s.stmtIdx] = &ast.AssignStmt{Lhs: lhs, Tok: token.ASSIGN, Rhs: call.Args}
 	case DupCall:
 		dup := b.List[s.stmtIdx]
 		nl := make([]ast.Stmt, 0, len(b.List)+1)
@@ -328,6 +410,22 @@ func apply(s site, op Operator, src []byte) ([]byte, bool) {
 			return nil, false
 		}
 		b.List[s.stmtIdx], b.List[s.stmtIdx+1] = b.List[s.stmtIdx+1], b.List[s.stmtIdx]
+	case RewireCallee:
+		// Redirect each call's target without moving its statement or arguments:
+		// swap the Fun expressions of the two adjacent calls. A→t1 becomes A→t2 and
+		// vice versa. Compiles only when the signatures line up; a mismatch fails to
+		// build and is reported NOT_VIABLE — same graceful path as DROP_CALL.
+		if s.stmtIdx+1 >= len(b.List) {
+			return nil, false
+		}
+		c1, c2 := stmtCall(b.List[s.stmtIdx]), stmtCall(b.List[s.stmtIdx+1])
+		if c1 == nil || c2 == nil {
+			return nil, false
+		}
+		if c1.Fun == c2.Fun {
+			return nil, false // same callee — rewire is a no-op
+		}
+		c1.Fun, c2.Fun = c2.Fun, c1.Fun
 	default:
 		return nil, false
 	}
@@ -340,9 +438,9 @@ func apply(s site, op Operator, src []byte) ([]byte, bool) {
 
 // runSuite runs the package tests once and classifies the outcome. A build
 // failure is NotViable; a test failure is Killed; a pass is Lived.
-func runSuite(dir string, timeout time.Duration) Status {
+func runSuite(dir, pattern string, timeout time.Duration) Status {
 	cmd := exec.Command("go", "test", "-mod=mod", "-count=1",
-		"-timeout", timeout.String(), ".")
+		"-timeout", timeout.String(), pattern)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err == nil {
@@ -353,6 +451,16 @@ func runSuite(dir string, timeout time.Duration) Status {
 			!bytes.Contains(out, []byte("--- FAIL")) {
 		return NotViable
 	}
+	// A panic/timeout/deadlock caught the mutant by crashing execution, not by an
+	// assertion reading the mutated value — note go test still co-prints
+	// "--- FAIL" for the panicking test, so we key off the crash markers, not its
+	// absence. The checked-coverage signal models asserted-value dependence only,
+	// so these are tracked apart to keep the eval comparing like with like.
+	if bytes.Contains(out, []byte("panic:")) ||
+		bytes.Contains(out, []byte("test timed out")) ||
+		bytes.Contains(out, []byte("fatal error:")) {
+		return Crashed
+	}
 	return Killed
 }
 
@@ -360,10 +468,15 @@ var coverRe = regexp.MustCompile(`^(.+):(\d+)\.\d+,(\d+)\.\d+ \d+ (\d+)$`)
 
 // coveredLines runs the suite once with coverage and returns covered lines
 // keyed by base filename, mirroring checkedcovssa's profile reader.
-func coveredLines(dir string, timeout time.Duration) (map[string]map[int]bool, error) {
+func coveredLines(dir, pattern, coverpkg string, timeout time.Duration) (map[string]map[int]bool, error) {
 	tmp := filepath.Join(os.TempDir(), "boundarymut-cover.out")
-	cmd := exec.Command("go", "test", "-mod=mod", "-covermode=set",
-		"-timeout", timeout.String(), "-coverprofile="+tmp, ".")
+	args := []string{"test", "-mod=mod", "-covermode=set",
+		"-timeout", timeout.String(), "-coverprofile=" + tmp}
+	if coverpkg != "" {
+		args = append(args, "-coverpkg="+coverpkg)
+	}
+	args = append(args, pattern)
+	cmd := exec.Command("go", args...)
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: coverage `go test` non-zero (may be partial):\n%s\n",

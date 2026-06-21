@@ -26,6 +26,8 @@ func TestAuditReportNoFindingsIsSilent(t *testing.T) {
 func TestAuditRegistryIncludesAllPlannedHeuristics(t *testing.T) {
 	want := []string{
 		"outcome-under-cover",
+		"outcome-unpinned",
+		"discarded-return",
 		"unpinned-arg",
 		"boundary-blind",
 		"loose-count",
@@ -334,6 +336,9 @@ func TestDuplicateTestCaseDetector(t *testing.T) {
 	}
 	if findings[0].rule != "duplicate-test-case" || findings[0].site != "TestService/Create/valid_a <=> TestService/Create/valid_b" {
 		t.Fatalf("unexpected finding: %+v", findings[0])
+	}
+	if findings[0].kind != hazard {
+		t.Fatalf("duplicate-test-case should be a hazard, got %+v", findings[0])
 	}
 	if findings[0].odc.Qualifier != "Extraneous" {
 		t.Fatalf("unexpected ODC qualifier: %+v", findings[0].odc)

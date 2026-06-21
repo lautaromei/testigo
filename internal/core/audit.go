@@ -148,6 +148,8 @@ func auditIsGeneratedID(id string) bool {
 func init() {
 	random.SetIDRecorder(NoteGeneratedID)
 	registerAuditDetector(outcomeUnderCoverDetector{})
+	registerAuditDetector(outcomeUnpinnedDetector{})
+	registerAuditDetector(discardedReturnDetector{})
 	registerAuditDetector(looseCountDetector{})
 	registerAuditDetector(tautologyDetector{})
 	registerAuditDetector(errorPathUnexercisedDetector{})
@@ -170,7 +172,10 @@ func init() {
 // measuring. Enable with TESTIGO_AUDIT_EXPERIMENTAL=on (the eval harness sets
 // this so calibration still sees them).
 var auditExperimentalRules = map[string]bool{
-	"unpinned-arg": true, // prec ~0.43: over-fires on args constrained indirectly via outcome
+	"unpinned-arg":     true, // prec ~0.43: over-fires on args constrained indirectly via outcome
+	"outcome-unpinned": true, // prec 0.00 full-corpus: ReturnCorrupt mutants already killed by suite (redundant with mutation)
+	"discarded-return": true, // prec 0.00 full-corpus: ReturnCorrupt mutants already killed by suite (redundant with mutation)
+	"loose-count":      true, // prec 0.06 full-corpus: DupCall mutants nearly always killed by suite
 }
 
 func auditExperimentalOn() bool {
