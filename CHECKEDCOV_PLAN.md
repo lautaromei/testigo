@@ -153,6 +153,103 @@ código alcanzado solo por dispatch (doubles inyectados, `http.ResponseWriter`).
 - Resultado httpapi: clase FP dominante `writeJSON` covered-unchecked **eliminada**
   (vía path Code). ~9-60s según deps, sin OOM.
 
+### Siguiente frontera — estado persistente observado más tarde
+
+Queda una clase FP importante que `strings` expone bien: **estado persistente
+construido por helpers privados y observado después por una API pública**.
+
+Caso representativo: `strings.Replacer`.
+
+```
+NewReplacer(oldnew...)
+  -> (*Replacer).buildOnce
+      -> (*Replacer).build
+          -> makeGenericReplacer
+              -> (*trieNode).add          // construye trie/tabla interna
+
+test:
+  r := NewReplacer(...)
+  got := r.Replace(input)
+  if got != want { t.Errorf(...) }
+```
+
+Semánticamente, los stores internos de `trieNode.add` y `makeGenericReplacer`
+sí están verificados: si se rompe la tabla/trie, `Replace` devuelve otro string
+y el test falla. Pero el slice actual no modela bien esa cadena:
+
+```
+constructor/helper privado -> objeto persistente retornado -> método público -> assert
+```
+
+El filtro shipped para **agregados locales retornados** baja mucho ruido en
+funciones puras (`out := make(...); out[i] = ...; return out`) y evita reportar
+buffers/slices temporales como unchecked. No alcanza para `Replacer`, porque el
+estado se guarda en un objeto que sobrevive entre llamadas y se consume después.
+
+#### Cómo atacarlo sin hardcodear `strings`
+
+Modelar **heap summaries persistentes** por tipo/objeto:
+
+1. Identificar funciones constructoras/mutadoras que escriben campos de un objeto
+   que retorna o recibe por parámetro:
+   - `return &T{...}`, `return t`, `r.field = ...`, `t.table[i] = ...`
+   - resumir writes como `(type T, field/path) -> source positions`.
+2. Identificar métodos públicos/observados que leen ese mismo estado y cuyo
+   resultado/call-site está checked:
+   - `func (r *T) Replace(...) string`
+   - loads/calls que demandan `(type T, field/path)` y terminan en un assert.
+3. Propagar checked hacia atrás:
+   - si `(*T).Method` está checked y lee `T.path`,
+   - y `constructor/helper` escribió `T.path`,
+   - marcar esas writes como checked.
+4. Mantener field-sensitivity:
+   - si el test solo observa `Code`, no marcar `Header`.
+   - esta es la protección contra tapar bugs reales como "campo no assertado".
+5. Acotar el alcance:
+   - solo paquetes SUT+tests, igual que `resolveDynamicCallees`;
+   - depth de path bajo (`maxFieldPathDepth`);
+   - no cruzar reflection/serialization.
+
+#### Fixture mínimo para la próxima IA
+
+Crear un test parecido a:
+
+```go
+type table struct {
+    slots []string
+}
+
+func newTable(xs ...string) *table {
+    t := &table{slots: make([]string, len(xs))}
+    for i, x := range xs {
+        t.slots[i] = x
+    }
+    return t
+}
+
+func (t *table) Join() string {
+    return strings.Join(t.slots, ",")
+}
+
+func TestTable(t *testing.T) {
+    got := newTable("a", "b").Join()
+    if got != "a,b" {
+        t.Fatalf("got %q", got)
+    }
+}
+```
+
+Esperado: los stores `t.slots[i] = x` deben quedar checked, pero un campo
+persistente no leído por `Join` debe seguir unchecked. Ese segundo caso es
+obligatorio para no perder precisión.
+
+#### Estado actual medido en `strings`
+
+Después de los filtros locales, `checkedcov` sigue reportando ruido relevante en
+`replace.go.add`, `replace.go.buildOnce`, `makeGenericReplacer`, y parte de
+`WriteString`/`Replace`. La mayoría no son gaps de test reales: son internals del
+trie/buffer observados por `TestReplacer` a través de `Replace`/`WriteString`.
+
 ---
 
 ## 3. Arquitectura de la nueva CLI

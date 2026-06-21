@@ -556,6 +556,8 @@ func Analyze(dir string) (Report, error) {
 			srcFiles[filepath.Base(f)] = f
 		}
 	}
+	markCheckedLocalAggregateStores(allFns, fset, targetPath, checked, checkedAbs, paramStores, dynCallees, callSites)
+
 	type fnRange struct {
 		name       string
 		base       string
@@ -956,6 +958,169 @@ func paramIndex(fn *ssa.Function, param *ssa.Parameter) int {
 		}
 	}
 	return -1
+}
+
+func markCheckedLocalAggregateStores(allFns map[*ssa.Function]bool, fset *token.FileSet, targetPath string, checked map[string]map[int]bool, checkedAbs map[string]map[int]bool, paramStores map[*ssa.Function]map[int]map[string]bool, dyn map[*ssa.Call][]*ssa.Function, callSites map[*ssa.Function][]*ssa.Call) {
+	if targetPath == "" {
+		return
+	}
+	record := func(pos token.Pos) {
+		if !pos.IsValid() {
+			return
+		}
+		p := fset.Position(pos)
+		if p.Filename == "" {
+			return
+		}
+		base := filepath.Base(p.Filename)
+		if checked[base] == nil {
+			checked[base] = map[int]bool{}
+		}
+		checked[base][p.Line] = true
+		abs, err := filepath.Abs(p.Filename)
+		if err != nil {
+			abs = filepath.Clean(p.Filename)
+		} else {
+			abs = filepath.Clean(abs)
+		}
+		if checkedAbs[abs] == nil {
+			checkedAbs[abs] = map[int]bool{}
+		}
+		checkedAbs[abs][p.Line] = true
+	}
+	for fn := range allFns {
+		if fn.Pkg == nil || fn.Pkg.Pkg.Path() != targetPath {
+			continue
+		}
+		returnChecked := functionReturnOrCallSiteChecked(fn, fset, checked, callSites)
+		if !returnChecked {
+			continue
+		}
+		if functionOnlyBuildsCheckedReturn(fn, paramStores, dyn) {
+			for _, b := range fn.Blocks {
+				for _, instr := range b.Instrs {
+					record(instr.Pos())
+				}
+			}
+			continue
+		}
+		for _, b := range fn.Blocks {
+			for _, instr := range b.Instrs {
+				switch x := instr.(type) {
+				case *ssa.Store:
+					if isLocalAggregateStore(fn, x.Addr) {
+						record(x.Pos())
+					}
+				case *ssa.MapUpdate:
+					if isLocalAggregateStore(fn, x.Map) {
+						record(x.Pos())
+					}
+				}
+			}
+		}
+	}
+}
+
+func functionReturnOrCallSiteChecked(fn *ssa.Function, fset *token.FileSet, checked map[string]map[int]bool, callSites map[*ssa.Function][]*ssa.Call) bool {
+	for _, c := range callSites[fn] {
+		p := fset.Position(c.Pos())
+		if p.Filename != "" && checked[filepath.Base(p.Filename)][p.Line] {
+			return true
+		}
+	}
+	for _, b := range fn.Blocks {
+		for _, instr := range b.Instrs {
+			ret, ok := instr.(*ssa.Return)
+			if !ok {
+				continue
+			}
+			p := fset.Position(ret.Pos())
+			if p.Filename != "" && checked[filepath.Base(p.Filename)][p.Line] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func functionOnlyBuildsCheckedReturn(fn *ssa.Function, paramStores map[*ssa.Function]map[int]map[string]bool, dyn map[*ssa.Call][]*ssa.Function) bool {
+	for _, b := range fn.Blocks {
+		for _, instr := range b.Instrs {
+			switch x := instr.(type) {
+			case *ssa.Store:
+				if !isLocalAggregateStore(fn, x.Addr) {
+					return false
+				}
+			case *ssa.MapUpdate:
+				if !isLocalAggregateStore(fn, x.Map) {
+					return false
+				}
+			case *ssa.Send:
+				return false
+			case *ssa.Call:
+				if callMayMutateExternalState(fn, x, paramStores, dyn) {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+func callMayMutateExternalState(fn *ssa.Function, c *ssa.Call, paramStores map[*ssa.Function]map[int]map[string]bool, dyn map[*ssa.Call][]*ssa.Function) bool {
+	if c == nil {
+		return false
+	}
+	if bi, ok := c.Call.Value.(*ssa.Builtin); ok {
+		return bi.Name() == "delete"
+	}
+	callees := calleesOf(c, dyn)
+	for _, callee := range callees {
+		for idx := range paramStores[callee] {
+			arg, ok := callArg(c, idx)
+			if ok && !isLocalAggregateStore(fn, arg) {
+				return true
+			}
+		}
+	}
+	sig := c.Call.Signature()
+	if sig == nil || sig.Results().Len() == 0 {
+		callee := c.Call.StaticCallee()
+		return callee == nil || !samePackageUnexported(callee, fn)
+	}
+	return false
+}
+
+func samePackageUnexported(callee, caller *ssa.Function) bool {
+	if callee == nil || caller == nil || callee.Pkg == nil || caller.Pkg == nil || callee.Pkg.Pkg != caller.Pkg.Pkg {
+		return false
+	}
+	name := callee.Name()
+	return name == "" || strings.Contains(name, "$") || ('a' <= name[0] && name[0] <= 'z')
+}
+
+func isLocalAggregateStore(fn *ssa.Function, v ssa.Value) bool {
+	if v == nil {
+		return false
+	}
+	root := addrKey(v).root
+	switch root.(type) {
+	case *ssa.Alloc, *ssa.MakeSlice, *ssa.MakeMap, *ssa.MakeChan:
+		return true
+	}
+	instr, ok := root.(ssa.Instruction)
+	if !ok {
+		return false
+	}
+	if fn != nil && instr.Parent() != fn {
+		return false
+	}
+	switch instr.(type) {
+	case *ssa.Call, *ssa.MakeInterface:
+		return false
+	default:
+		return true
+	}
 }
 
 func fieldPathDepth(path string) int {

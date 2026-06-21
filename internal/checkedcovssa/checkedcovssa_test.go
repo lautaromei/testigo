@@ -68,6 +68,46 @@ func TestHandleChecksCodeOnly(t *testing.T) {
 	}
 }
 
+func TestAnalyzeTreatsReturnedLocalAggregateStoresAsChecked(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "go.mod", "module fixture.test/localagg\n\ngo 1.24\n")
+	src := `package localagg
+
+func parts(s string) []string {
+	out := make([]string, 2)
+	out[0] = s[:1]
+	out[1] = s[1:]
+	return out
+}
+`
+	writeFile(t, dir, "sample.go", src)
+	writeFile(t, dir, "sample_test.go", `package localagg
+
+import "testing"
+
+func TestParts(t *testing.T) {
+	got := parts("ab")
+	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("parts = %#v", got)
+	}
+}
+`)
+
+	rep, err := Analyze(dir)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+
+	firstStore := lineOf(t, src, `out[0] = s[:1]`)
+	secondStore := lineOf(t, src, `out[1] = s[1:]`)
+	if !rep.IsChecked("sample.go", firstStore) {
+		t.Fatalf("local aggregate store line %d was not checked", firstStore)
+	}
+	if !rep.IsChecked("sample.go", secondStore) {
+		t.Fatalf("local aggregate store line %d was not checked", secondStore)
+	}
+}
+
 func TestAnalyzeTracksHeapWritesThroughInterfaceDispatch(t *testing.T) {
 	t.Skip("checkedcovssa field-sensitive heap summaries are static-call only; dynamic dispatch is a future iteration")
 	dir := t.TempDir()

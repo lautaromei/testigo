@@ -190,7 +190,7 @@ func AnalyzeWithOptions(opts Options) (Report, error) {
 				Statement: lineAt(srcLines[e.file], e.line),
 				Effect:    e.effect,
 				Predicts:  "DROP_CALL survives",
-				Reason:    "effect executed but no asserted value depends on its source line",
+				Reason:    "effect executed but the current asserted-value slice did not prove that its result was observed",
 			})
 		case !e.reached:
 			rep.Summary.EffectsUnreached++
@@ -254,7 +254,7 @@ func (r Report) Text() string {
 		r.Summary.Edges, r.Summary.InterfaceEdges, r.Summary.EdgesUnobserved,
 		r.Summary.Branches, r.Summary.BranchesUntaken,
 		r.Summary.Effects, r.Summary.EffectsReachedUnchecked, r.Summary.EffectsUnreached)
-	fmt.Fprintln(&b, "model: SSA concrete call edges (static + scope-bounded interface dispatch), branch successors, structural effects; checked state reuses checkedcov's asserted-value slice.")
+	fmt.Fprintln(&b, "model: SSA concrete call edges (static + scope-bounded interface dispatch), branch successors, structural effects; checked state uses checkedcov's asserted-value slice plus API-observed effect filters for local/private implementation state and iterator yield callbacks.")
 	return b.String()
 }
 
@@ -361,7 +361,7 @@ func collectFunc(fn *ssa.Function, fset *token.FileSet, cov coverageMap, checked
 						line:    line,
 						effect:  effect,
 						reached: cov.covered(file, line),
-						checked: checked.checked(file, line),
+						checked: checked.checked(file, line) || effectObservedByAPI(fn, x),
 					})
 				}
 			case *ssa.Go:
@@ -369,7 +369,7 @@ func collectFunc(fn *ssa.Function, fset *token.FileSet, cov coverageMap, checked
 			case *ssa.Defer:
 				addCallEdges(fn, fset, cov, reach, x, edges)
 			case *ssa.Store:
-				if effect, ok := storeEffect(x); ok {
+				if effect, ok := storeEffect(fn, x); ok {
 					addEffect(fset, cov, checked, fn, x.Pos(), effect, effects)
 				}
 			case *ssa.MapUpdate:
@@ -447,8 +447,8 @@ func callEffect(c *ssa.Call) (string, bool) {
 	return "", false
 }
 
-func storeEffect(s *ssa.Store) (string, bool) {
-	if isLocalStore(s.Addr) {
+func storeEffect(fn *ssa.Function, s *ssa.Store) (string, bool) {
+	if isLocalStore(fn, s.Addr) || isPrivateFieldStore(s.Addr) || isUnexportedReceiverStore(fn, s.Addr) {
 		return "", false
 	}
 	return "store " + s.Addr.String(), true
@@ -459,7 +459,7 @@ func instructionEffect(instr ssa.Instruction) (string, bool) {
 	case *ssa.Call:
 		return callEffect(x)
 	case *ssa.Store:
-		return storeEffect(x)
+		return storeEffect(nil, x)
 	case *ssa.MapUpdate:
 		return "map update " + x.Map.String(), true
 	case *ssa.Send:
@@ -524,10 +524,25 @@ func reachableBlocks(root *ssa.BasicBlock, stop map[*ssa.BasicBlock]bool) map[*s
 	return seen
 }
 
-func isLocalStore(v ssa.Value) bool {
+func isLocalStore(fn *ssa.Function, v ssa.Value) bool {
 	root := addrRoot(v)
-	_, ok := root.(*ssa.Alloc)
-	return ok
+	switch root.(type) {
+	case *ssa.Alloc, *ssa.MakeSlice, *ssa.MakeMap, *ssa.MakeChan:
+		return true
+	}
+	instr, ok := root.(ssa.Instruction)
+	if !ok {
+		return false
+	}
+	if fn != nil && instr.Parent() != fn {
+		return false
+	}
+	switch instr.(type) {
+	case *ssa.Call, *ssa.MakeInterface:
+		return false
+	default:
+		return true
+	}
 }
 
 func addrRoot(v ssa.Value) ssa.Value {
@@ -541,6 +556,125 @@ func addrRoot(v ssa.Value) ssa.Value {
 			return v
 		}
 	}
+}
+
+func effectObservedByAPI(fn *ssa.Function, c *ssa.Call) bool {
+	return isIteratorYieldCall(c) || isInternalImplementationCall(fn, c)
+}
+
+func isIteratorYieldCall(c *ssa.Call) bool {
+	if c == nil || c.Call.StaticCallee() != nil {
+		return false
+	}
+	sig := c.Call.Signature()
+	if sig == nil || sig.Params().Len() != 1 || sig.Results().Len() != 1 {
+		return false
+	}
+	basic, ok := sig.Results().At(0).Type().Underlying().(*types.Basic)
+	return ok && basic.Kind() == types.Bool
+}
+
+func isInternalImplementationCall(fn *ssa.Function, c *ssa.Call) bool {
+	if c == nil {
+		return false
+	}
+	callee := c.Call.StaticCallee()
+	if callee == nil {
+		return false
+	}
+	if isUnexportedFunc(callee) && samePackage(fn, callee) {
+		return true
+	}
+	for _, arg := range c.Call.Args {
+		if containsPrivateFieldAddr(arg) {
+			return true
+		}
+	}
+	return false
+}
+
+func isUnexportedFunc(fn *ssa.Function) bool {
+	if fn == nil {
+		return false
+	}
+	if fn.Signature != nil && fn.Signature.Recv() != nil {
+		return unexportedTypeName(fn.Signature.Recv().Type())
+	}
+	name := fn.Name()
+	if name == "" || strings.Contains(name, "$") {
+		return true
+	}
+	r := rune(name[0])
+	return r >= 'a' && r <= 'z'
+}
+
+func samePackage(a, b *ssa.Function) bool {
+	return a != nil && b != nil && a.Pkg != nil && b.Pkg != nil && a.Pkg.Pkg == b.Pkg.Pkg
+}
+
+func isPrivateFieldStore(v ssa.Value) bool {
+	return containsPrivateFieldAddr(v)
+}
+
+func containsPrivateFieldAddr(v ssa.Value) bool {
+	for {
+		switch x := v.(type) {
+		case *ssa.FieldAddr:
+			if isUnexportedField(x.X.Type(), x.Field) {
+				return true
+			}
+			v = x.X
+		case *ssa.IndexAddr:
+			v = x.X
+		case *ssa.UnOp:
+			v = x.X
+		default:
+			return false
+		}
+	}
+}
+
+func isUnexportedReceiverStore(fn *ssa.Function, v ssa.Value) bool {
+	if fn == nil || fn.Signature == nil || fn.Signature.Recv() == nil {
+		return false
+	}
+	if !unexportedTypeName(fn.Signature.Recv().Type()) {
+		return false
+	}
+	root := addrRoot(v)
+	if p, ok := root.(*ssa.Parameter); ok && len(fn.Params) > 0 && p == fn.Params[0] {
+		return true
+	}
+	return false
+}
+
+func isUnexportedField(t types.Type, index int) bool {
+	t = types.Unalias(t)
+	if ptr, ok := t.(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	st, ok := t.Underlying().(*types.Struct)
+	if !ok || index < 0 || index >= st.NumFields() {
+		return false
+	}
+	return !st.Field(index).Exported()
+}
+
+func unexportedTypeName(t types.Type) bool {
+	t = types.Unalias(t)
+	if ptr, ok := t.(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	named, ok := t.(*types.Named)
+	if !ok {
+		return false
+	}
+	name := named.Obj().Name()
+	if name == "" {
+		return false
+	}
+	r := rune(name[0])
+	return r >= 'a' && r <= 'z'
 }
 
 type reachability struct {

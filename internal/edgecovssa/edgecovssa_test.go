@@ -107,6 +107,78 @@ func TestSend(t *testing.T) {
 	}
 }
 
+func TestAnalyzeDoesNotReportLocalSliceStoresAsUncheckedEffects(t *testing.T) {
+	dir := t.TempDir()
+	writeEdgeFile(t, dir, "go.mod", "module fixture.test/edgelocal\n\ngo 1.24\n")
+	writeEdgeFile(t, dir, "sample.go", `package edgelocal
+
+func parts(s string) []string {
+	out := make([]string, 2)
+	out[0] = s[:1]
+	out[1] = s[1:]
+	return out
+}
+`)
+	writeEdgeFile(t, dir, "sample_test.go", `package edgelocal
+
+import "testing"
+
+func TestParts(t *testing.T) {
+	got := parts("ab")
+	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("parts = %#v", got)
+	}
+}
+`)
+
+	rep, err := Analyze(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range rep.Findings {
+		if f.Kind == "effect-reached-unchecked" && strings.Contains(f.File, "sample.go") {
+			t.Fatalf("local slice store should not be an unchecked effect: %+v", f)
+		}
+	}
+}
+
+func TestAnalyzeDoesNotReportIteratorYieldAsUncheckedEffect(t *testing.T) {
+	dir := t.TempDir()
+	writeEdgeFile(t, dir, "go.mod", "module fixture.test/edgeyield\n\ngo 1.24\n")
+	writeEdgeFile(t, dir, "sample.go", `package edgeyield
+
+func seq(s string) func(func(string) bool) {
+	return func(yield func(string) bool) {
+		yield(s)
+	}
+}
+`)
+	writeEdgeFile(t, dir, "sample_test.go", `package edgeyield
+
+import "testing"
+
+func TestSeq(t *testing.T) {
+	var got []string
+	for v := range seq("ok") {
+		got = append(got, v)
+	}
+	if len(got) != 1 || got[0] != "ok" {
+		t.Fatalf("seq = %#v", got)
+	}
+}
+`)
+
+	rep, err := Analyze(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range rep.Findings {
+		if f.Kind == "effect-reached-unchecked" && strings.Contains(f.File, "sample.go") {
+			t.Fatalf("yield should be treated as API-observed: %+v", f)
+		}
+	}
+}
+
 func writeEdgeFile(t *testing.T, dir, name, data string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644); err != nil {
