@@ -181,8 +181,9 @@ Besides `Get`, `Update`, and `Delete`, a database supports `Insert`, `Set`,
 start with `Query()` and finish with `Rows()`, `First()`, or `Count()`.
 
 `memdb` is intended for tests and hand-written doubles; it is not a concurrent
-or persistent database. See the [wiki guide](https://github.com/lautaromei/testigo/wiki/In-memory-repositories)
-and the [complete repository-double examples](https://github.com/lautaromei/testigo-usage/tree/main/internal/users/usertest).
+or persistent database. See the
+[wiki guide](https://github.com/lautaromei/testigo/wiki/In-memory-repositories)
+for the complete API and repository-double examples.
 
 ## Restore between subtests — no `BeforeEach`/`AfterEach`
 
