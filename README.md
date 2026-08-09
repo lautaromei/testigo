@@ -21,6 +21,8 @@ Features:
   baseline before each subtest. No `BeforeEach`/`AfterEach`.
 - **Object-mother fixtures and reproducible random data** — the noisy half of a
   test, made readable.
+- **In-memory repository state** — `memdb.DB[T]` provides keyed CRUD and fluent
+  queries for hand-written repository doubles.
 
 Getting started:
 
@@ -147,6 +149,41 @@ when  := random.AnyDateAfterNow()
 pick  := random.Pick("a", "b", "c")
 ```
 
+## `testigo/memdb` — in-memory repository doubles
+
+`memdb.DB[T]` keeps the storage mechanics out of hand-written repository
+doubles. Give it a primary-key function, seed it with values, and use its CRUD
+and query methods from the double:
+
+```go
+type UserRepositoryDouble struct {
+	testigo.Spy
+	Users memdb.DB[User]
+}
+
+func NewUserRepository(seed ...User) *UserRepositoryDouble {
+	return &UserRepositoryDouble{
+		Users: memdb.New(func(user User) string { return user.ID }, seed...),
+	}
+}
+
+repo := NewUserRepository(User{ID: "usr_1", Name: "Ada"})
+user, found := repo.Users.Get("usr_1")
+repo.Users.Update("usr_1", func(user User) User {
+	user.Name = "Ada Lovelace"
+	return user
+})
+repo.Users.Delete("usr_1")
+```
+
+Besides `Get`, `Update`, and `Delete`, a database supports `Insert`, `Set`,
+`Len`, `All`, `Where`, and `First`. For filtered, ordered, and paginated reads,
+start with `Query()` and finish with `Rows()`, `First()`, or `Count()`.
+
+`memdb` is intended for tests and hand-written doubles; it is not a concurrent
+or persistent database. See the [wiki guide](https://github.com/lautaromei/testigo/wiki/In-memory-repositories)
+and the [complete repository-double examples](https://github.com/lautaromei/testigo-usage/tree/main/internal/users/usertest).
+
 ## Restore between subtests — no `BeforeEach`/`AfterEach`
 
 `NewDouble(t, x)` snapshots `x` as an **immutable baseline**. Before every
@@ -200,6 +237,7 @@ import (
 	"github.com/lautaromei/testigo"          // doubles: Spy, Call, NewDouble, Run, Reset
 	"github.com/lautaromei/testigo/assert"   // assertions: That/Called, Equal, NoError, ...
 	"github.com/lautaromei/testigo/fixture"  // object mothers: New, With, Times, OneOf, ...
+	"github.com/lautaromei/testigo/memdb"    // keyed state and queries for repository doubles
 	"github.com/lautaromei/testigo/random"   // reproducible test data
 )
 ```
