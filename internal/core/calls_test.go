@@ -112,6 +112,48 @@ func TestFinalCheck_RequiresOneOutcomeAssertionPerReturnValue(t *testing.T) {
 	}
 }
 
+func TestFinalCheck_EnforcesAtMostThreeAssertions(t *testing.T) {
+	defer isolateCurrentTestRegistries()()
+
+	ft := &fakeT{}
+	armFinalCheck(ft)
+	subject := &TestSubject{spy: &Spy{}}
+	Expect(ft).Called(subject.DoSomething).Never()
+	Expect(ft).Called(subject.DoSomethingElse).Never()
+	Equal(ft, 1, 1)
+	Equal(ft, 2, 2)
+	ft.runCleanups()
+
+	if maxAssertionsPerTest == 0 {
+		if ft.failed {
+			t.Fatalf("Expected the build-tag bypass to disable the assertion limit, got: %s", ft.message)
+		}
+		return
+	}
+	if !ft.failed {
+		t.Fatal("Expected four assertions to exceed the default limit")
+	}
+	if !strings.Contains(ft.message, "maximum is 3") || !strings.Contains(ft.message, "testigo_allow_many_assertions") {
+		t.Fatalf("Expected a focused assertion-limit failure, got: %s", ft.message)
+	}
+}
+
+func TestFinalCheck_AllowsThreeAssertions(t *testing.T) {
+	defer isolateCurrentTestRegistries()()
+
+	ft := &fakeT{}
+	armFinalCheck(ft)
+	subject := &TestSubject{spy: &Spy{}}
+	Expect(ft).Called(subject.DoSomething).Never()
+	Expect(ft).Called(subject.DoSomethingElse).Never()
+	Equal(ft, 1, 1)
+	ft.runCleanups()
+
+	if ft.failed {
+		t.Fatalf("Expected three assertions to pass, got: %s", ft.message)
+	}
+}
+
 func isolateCurrentTestRegistries() func() {
 	testID := getTestID()
 	testSpies.Delete(testID)

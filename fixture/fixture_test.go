@@ -1,6 +1,7 @@
 package fixture
 
 import (
+	"fmt"
 	"strconv"
 	"testing"
 
@@ -284,4 +285,55 @@ func TestBaseBuilderStartsFromAnIndependentCopy(t *testing.T) {
 
 	assert.Equal(t, builder.Bare().tags, []string{"changed"})
 	assert.Equal(t, base.Bare().tags, []string{"original"})
+}
+
+func TestGeneratedBuilderBuildsItsBaseLazilyEveryTime(t *testing.T) {
+	draws := 0
+	builder := NewGeneratedBuilder(func() widget {
+		draws++
+		return widget{name: fmt.Sprintf("widget-%d", draws)}
+	})
+
+	first := builder.Bare()
+	second := builder.Bare()
+
+	assert.Equal(t, first.name, "widget-1")
+	assert.Equal(t, second.name, "widget-2")
+}
+
+func TestGeneratedBuilderAppliesSetAndWithInChainOrder(t *testing.T) {
+	builder := NewGeneratedBuilder(func() widget {
+		return widget{name: "base"}
+	}).Set(func(value *widget) {
+		value.name += "-set"
+	}).With(func(value widget) widget {
+		value.name += "-with"
+		return value
+	})
+
+	assert.Equal(t, builder.Bare().name, "base-set-with")
+}
+
+func TestZeroBuilderCanStillBeConfigured(t *testing.T) {
+	var builder Builder[widget]
+
+	got := builder.Set(func(value *widget) {
+		value.name = "configured"
+	}).Bare()
+
+	assert.Equal(t, got.name, "configured")
+}
+
+func TestBuilderPtrAndTimesBuildIndependentValues(t *testing.T) {
+	draws := 0
+	builder := NewGeneratedBuilder(func() widget {
+		draws++
+		return widget{name: fmt.Sprintf("widget-%d", draws)}
+	})
+
+	ptr := builder.Ptr()
+	many := builder.Times(2)
+
+	assert.Equal(t, ptr.name, "widget-1")
+	assert.Equal(t, []string{many[0].name, many[1].name}, []string{"widget-2", "widget-3"})
 }

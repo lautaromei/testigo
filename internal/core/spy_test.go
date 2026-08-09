@@ -312,24 +312,38 @@ func TestHappened(t *testing.T) {
 		}
 	})
 
-	t.Run("supports Times, Never and AtLeastOnce", func(t *testing.T) {
-		spy := &Spy{}
-		subject := &TestSubject{spy: spy}
-		subject.DoSomething("repeat", 0)
-		subject.DoSomething("repeat", 0)
-		subject.DoSomething("repeat", 0)
+	for _, tc := range []struct {
+		name   string
+		calls  int
+		assert func(*fakeT, *TestSubject)
+	}{
+		{"supports Times", 3, func(ft *fakeT, subject *TestSubject) {
+			Expect(ft).Called(subject.DoSomething).Times(3)
+		}},
+		{"supports Never", 0, func(ft *fakeT, subject *TestSubject) {
+			Expect(ft).Called(subject.DoSomethingElse).Never()
+		}},
+		{"supports AtLeastOnce", 3, func(ft *fakeT, subject *TestSubject) {
+			Expect(ft).Called(subject.DoSomething).AtLeastOnce()
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spy := &Spy{}
+			subject := &TestSubject{spy: spy}
+			for range tc.calls {
+				subject.DoSomething("repeat", 0)
+			}
 
-		ft := &fakeT{}
-		Expect(ft).Called(subject.DoSomething).Times(3)
-		Expect(ft).Called(subject.DoSomethingElse).Never()
-		Expect(ft).Called(subject.DoSomething).AtLeastOnce()
-		Equal(ft, true, true)
-		ft.runCleanups()
+			ft := &fakeT{}
+			tc.assert(ft, subject)
+			Equal(ft, true, true)
+			ft.runCleanups()
 
-		if ft.failed {
-			t.Errorf("Expected all chains to pass, but failed with: %s", ft.message)
-		}
-	})
+			if ft.failed {
+				t.Errorf("Expected the chain to pass, but failed with: %s", ft.message)
+			}
+		})
+	}
 
 	t.Run("fails with AtLeastOnce when never called", func(t *testing.T) {
 		spy := &Spy{}

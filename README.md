@@ -2,17 +2,17 @@
 
 > **Not another testing lib.**
 
-`testigo` is a hand-written test-double toolkit for Go. You write your own spies
-and stubs as plain structs; `testigo` gives you the power to observe them, assert
-on them, and build the test data around them — without ever taking control away
-from the code you write. The doubles are your structs; `testigo` only watches and
-verifies, favoring immutability in a simple, highly readable way.
+`testigo` is a hand-written-first test-double toolkit for Go. You can write your
+own spies and stubs as plain structs, or opt into a small generator for repetitive
+fixtures, spies and seeders. `testigo` gives you the power to observe them, assert
+on them, and build the test data around them — without taking control away from
+the code you own.
 
 [![PkgGoDev](https://pkg.go.dev/badge/github.com/lautaromei/testigo)](https://pkg.go.dev/github.com/lautaromei/testigo)
 
 Features:
 
-- **Hand-written doubles** — spies you write, no code generation. Method
+- **Plain Go doubles** — hand-write them or generate the repetitive shell. Method
   *references* (`mailer.Send`), not strings — rename-safe and IDE-aware.
 - **Demanding assertions** — every recorded call must be accounted for, and
   verifying a call also demands asserting its outcome. The library refuses to let
@@ -25,6 +25,8 @@ Features:
   records through any repository function.
 - **In-memory repository state** — `memdb.DB[T]` provides keyed CRUD and fluent
   queries for hand-written repository doubles.
+- **Optional code generation** — one tagged spec can produce random factories,
+  fluent fixtures, spies, a grouped `Doubles`, seeders and `memdb` constructors.
 
 Getting started:
 
@@ -90,6 +92,10 @@ assert.Expect(t).That(g).Called(mailer.Send)        // explicit handle (your own
 
 It is demanding on purpose — that is what keeps tests honest as the code changes:
 
+- **At most three assertions per testigo test.** Value/state assertions and
+  `Called(...)` chains each count once. Split broader behavior into focused
+  `testigo.Run` subtests. For an intentionally inseparable case, compile with
+  `-tags=testigo_allow_many_assertions` to bypass the limit.
 - **Every call is accounted for.** A call that happened but was never asserted
   fails the test as an *unexpected call*, with the full call graph. You can't
   silently grow behavior the tests don't see.
@@ -109,6 +115,11 @@ assert.Equal(t, got, want)       // generic: cross-type compare is a compile err
 assert.NoError(t, err)           // t.Fatal when err != nil
 assert.Len(t, items, 3)
 assert.That(provider).DidChange() // a non-Spy field differs from registration
+```
+
+```bash
+# Exceptional compatibility/aggregate tests only: disable the 3-assertion rule.
+go test -tags=testigo_allow_many_assertions ./...
 ```
 
 > The `require`-style "stop now" behavior is built in: `NoError`/`Error` call
@@ -251,6 +262,42 @@ start with `Query()` and finish with `Rows()`, `First()`, or `Count()`.
 or persistent database. See the
 [wiki guide](https://github.com/lautaromei/testigo/wiki/In-memory-repositories)
 for the complete API and repository-double examples.
+
+## `testigo-gen` — optional generated test kits
+
+Keep the default API hand-written, or describe the repetitive pieces once in a
+private tagged struct:
+
+```go
+//go:generate go tool testigo-gen
+type testigoSpec struct {
+	Users    domain.User           `testigo:"fixture,memdb=ID"`
+	Mailer   domain.Mailer         `testigo:"spy"`
+	UserRepo domain.UserRepository `testigo:"spy,seeder=Upsert"`
+}
+```
+
+Running `go generate` creates:
+
+- `RandomUser`, plus an exported `Users.WithName(...).Bare()` fixture builder;
+- `MailerSpy`, `UserRepoSpy`, and constructors that register them with testigo;
+- one `Doubles` group and `NewDoubles(t, ...)` for configuring and registering
+  all generated spies together;
+- `NewUserRepoSeeder`, inferred from `Upsert`; and
+- `NewUsersDB`, keyed by `User.ID`.
+
+The fixture base is random by default and inferred from field types and names.
+Use `default=defaultUser` in the tag to supply your own `func() domain.User`.
+Fields that cannot be safely inferred retain their zero value; mark a field with
+`testigo:"-"` to exclude it explicitly.
+
+```bash
+go get -tool github.com/lautaromei/testigo/cmd/testigo-gen
+go generate ./...
+```
+
+See the [code generation guide](https://github.com/lautaromei/testigo/wiki/Code-generation)
+for supported signatures, tags, generated `Doubles`, and CI stale checks.
 
 ## Restore between subtests — no `BeforeEach`/`AfterEach`
 

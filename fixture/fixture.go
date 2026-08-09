@@ -116,35 +116,84 @@ func (f Base[T]) Copy() Base[T] {
 }
 
 // Builder derives values fluently without mutating its source or sibling
-// builders. Finish a chain with Bare.
+// builders. Its source may be a fixed base or a lazy generator. Finish a chain
+// with Bare.
 type Builder[T any] struct {
-	value T
+	generate func() T
+	steps    []Variation[T]
 }
 
 // NewBuilder starts an immutable fluent builder from base.
 func NewBuilder[T any](base T) Builder[T] {
-	return Builder[T]{value: testigo.Copy(base)}
+	canonical := testigo.Copy(base)
+	return Builder[T]{generate: func() T { return testigo.Copy(canonical) }}
 }
 
-// Set applies pointer-based configurations to a fresh copy and returns the
-// resulting builder. Nil configurations are ignored.
+// NewGeneratedBuilder starts an immutable fluent builder whose base is built
+// lazily on every Bare call. It panics when generate is nil.
+func NewGeneratedBuilder[T any](generate func() T) Builder[T] {
+	if generate == nil {
+		panic("fixture: nil builder generator")
+	}
+	return Builder[T]{generate: generate}
+}
+
+// Set appends pointer-based configurations and returns an independent builder.
+// Nil configurations are ignored.
 func (b Builder[T]) Set(configurations ...Configuration[T]) Builder[T] {
-	next := testigo.Copy(b.value)
+	next := b.copy()
 	for _, configure := range configurations {
 		if configure != nil {
-			configure(&next)
+			next.steps = append(next.steps, func(value T) T {
+				configure(&value)
+				return value
+			})
 		}
 	}
-	return Builder[T]{value: next}
+	return next
 }
 
-// With applies functional variations to a fresh copy and returns the resulting
-// builder.
+// With appends functional variations and returns an independent builder.
 func (b Builder[T]) With(variations ...Variation[T]) Builder[T] {
-	return Builder[T]{value: With(b.value, variations...)}
+	next := b.copy()
+	for _, variation := range variations {
+		if variation != nil {
+			next.steps = append(next.steps, variation)
+		}
+	}
+	return next
 }
 
-// Bare returns a fresh deep copy of the builder's current value.
+// Bare builds a fresh value and applies every chained operation in order.
 func (b Builder[T]) Bare() T {
-	return testigo.Copy(b.value)
+	var value T
+	if b.generate != nil {
+		value = testigo.Copy(b.generate())
+	}
+	for _, step := range b.steps {
+		value = step(value)
+	}
+	return testigo.Copy(value)
+}
+
+// Ptr returns a pointer to a freshly built value.
+func (b Builder[T]) Ptr() *T {
+	value := b.Bare()
+	return &value
+}
+
+// Times builds n independent values.
+func (b Builder[T]) Times(n int) []T {
+	values := make([]T, n)
+	for i := range values {
+		values[i] = b.Bare()
+	}
+	return values
+}
+
+func (b Builder[T]) copy() Builder[T] {
+	return Builder[T]{
+		generate: b.generate,
+		steps:    append([]Variation[T](nil), b.steps...),
+	}
 }

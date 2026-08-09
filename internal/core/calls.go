@@ -261,6 +261,7 @@ type testVerifier struct {
 	mu           sync.Mutex
 	pendings     []*PendingCall
 	valueAsserts int
+	assertions   int
 }
 
 var testVerifiers = sync.Map{}
@@ -290,6 +291,7 @@ func registerForFinalCheck(t testing.TB, p *PendingCall) {
 
 	tv.mu.Lock()
 	tv.pendings = append(tv.pendings, p)
+	tv.assertions++
 	tv.mu.Unlock()
 }
 
@@ -299,6 +301,7 @@ func noteValueAssertion() {
 			tv := val.(*testVerifier)
 			tv.mu.Lock()
 			tv.valueAsserts++
+			tv.assertions++
 			tv.mu.Unlock()
 		}
 	}
@@ -321,6 +324,11 @@ func finalCheck(t testing.TB, tv *testVerifier) {
 		exps = append(exps, p.exp)
 	}
 
+	if maxAssertionsPerTest > 0 && tv.assertions > maxAssertionsPerTest {
+		reportFinal(t, errors.New(assertionLimitFixMessage(tv.assertions)))
+		return
+	}
+
 	if t.Failed() {
 		return
 	}
@@ -338,6 +346,19 @@ func finalCheck(t testing.TB, tv *testVerifier) {
 	if tv.valueAsserts < required {
 		reportFinal(t, errors.New(outcomeAssertionFixMessage(tv.valueAsserts, required, sources)))
 	}
+}
+
+func assertionLimitFixMessage(found int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "testigo: test contains %d assertions; the maximum is %d.\n", found, maxAssertionsPerTest)
+	b.WriteString("\nAI_FIX:\n")
+	b.WriteString("problem: too_many_assertions_in_one_test\n")
+	fmt.Fprintf(&b, "found_assertions: %d\n", found)
+	fmt.Fprintf(&b, "maximum_assertions: %d\n", maxAssertionsPerTest)
+	b.WriteString("suggested_fix:\n")
+	b.WriteString("- Split the behavior into smaller testigo.Run subtests, each proving one outcome.\n")
+	b.WriteString("- When the assertions are intentionally inseparable, bypass this rule with: go test -tags=testigo_allow_many_assertions ./...")
+	return b.String()
 }
 
 type ignoredReturn struct {
