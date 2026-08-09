@@ -21,6 +21,8 @@ Features:
   baseline before each subtest. No `BeforeEach`/`AfterEach`.
 - **Object-mother fixtures and reproducible random data** — the noisy half of a
   test, made readable.
+- **Typed database seeding** — persist explicit or reproducibly generated test
+  records through any repository function.
 - **In-memory repository state** — `memdb.DB[T]` provides keyed CRUD and fluent
   queries for hand-written repository doubles.
 
@@ -131,6 +133,46 @@ maybeVIP := users.With(fixture.Maybe(asVIP))         // applied ~half the runs
 either   := users.With(fixture.OneOf(asGrace, asVIP)) // one of them, at random
 ```
 
+## `testigo/seed` — database initial conditions
+
+Persist the records a test needs without writing a `seedUsers`, `seedOrders`, or
+`seedXX` helper for every case. A small function adapts any repository, including
+repositories whose Upsert method also takes a context or returns a value:
+
+```go
+upsertUser := func(user User) error {
+	_, err := userRepository.Upsert(ctx, user)
+	return err
+}
+
+ada := seed.One(t, upsertUser, users.With(asVIP))
+team := seed.Many(t, upsertUser, grace, linus, margaret)
+```
+
+To make a domain type self-generating in tests, implement `seed.Random[T]`. The
+method can use `testigo/random`, so all generated records remain reproducible
+with `TESTIGO_SEED`:
+
+```go
+func (User) Random() User {
+	return User{
+		ID:    random.ID(),
+		Name:  random.Name(),
+		Email: random.Email(),
+	}
+}
+
+team := seed.Generate(t, 5, upsertUser, User{})
+```
+
+Go only permits methods on types declared in the same package. For an external
+domain type, define a local generator implementing `Random() ExternalUser` and
+pass that generator instead. `GenerateWith` remains available when an inline
+factory or the generated index is more convenient.
+
+`seed` establishes initial conditions; database cleanup remains explicit through
+the test's transaction rollback or a `testigo.Resetter`.
+
 ## `testigo/random` — reproducible test data
 
 Throwaway data that is distinct enough to avoid collisions, small enough to read
@@ -240,6 +282,7 @@ import (
 	"github.com/lautaromei/testigo/fixture"  // object mothers: New, With, Times, OneOf, ...
 	"github.com/lautaromei/testigo/memdb"    // keyed state and queries for repository doubles
 	"github.com/lautaromei/testigo/random"   // reproducible test data
+	"github.com/lautaromei/testigo/seed"     // persist explicit or generated initial records
 )
 ```
 
