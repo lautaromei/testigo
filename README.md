@@ -149,12 +149,12 @@ ada := seed.One(t, upsertUser, users.With(asVIP))
 team := seed.Many(t, upsertUser, grace, linus, margaret)
 ```
 
-To make a domain type self-generating in tests, implement `seed.Random[T]`. The
-method can use `testigo/random`, so all generated records remain reproducible
-with `TESTIGO_SEED`:
+Pass a typed generator function to create and persist random records in one
+operation. The function can use `testigo/random`, so all generated records
+remain reproducible with `TESTIGO_SEED`:
 
 ```go
-func (User) Random() User {
+randomUser := func() User {
 	return User{
 		ID:    random.ID(),
 		Name:  random.Name(),
@@ -162,13 +162,8 @@ func (User) Random() User {
 	}
 }
 
-team := seed.Generate(t, 5, upsertUser, User{})
+team := seed.Generate(t, 5, upsertUser, randomUser)
 ```
-
-Go only permits methods on types declared in the same package. For an external
-domain type, define a local generator implementing `Random() ExternalUser` and
-pass that generator instead. `GenerateWith` remains available when an inline
-factory or the generated index is more convenient.
 
 `seed` establishes initial conditions; database cleanup remains explicit through
 the test's transaction rollback or a `testigo.Resetter`.

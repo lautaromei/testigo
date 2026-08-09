@@ -14,14 +14,6 @@ type user struct {
 	Email string
 }
 
-func (user) Random() user {
-	return user{
-		ID:    random.ID(),
-		Name:  random.Name(),
-		Email: random.Email(),
-	}
-}
-
 func TestOnePersistsAndReturnsValue(t *testing.T) {
 	var persisted []user
 	upsert := func(value user) error {
@@ -52,39 +44,29 @@ func TestManyPersistsInOrderAndReturnsValues(t *testing.T) {
 
 func TestGenerateBuildsAndPersistsValuesInOrder(t *testing.T) {
 	var persisted []user
+	generated := 0
 	upsert := func(value user) error {
 		persisted = append(persisted, value)
 		return nil
 	}
 
-	got := Generate(t, 3, upsert, user{})
+	got := Generate(t, 3, upsert, func() user {
+		generated++
+		return user{ID: generated, Name: random.Name(), Email: random.Email()}
+	})
 
 	assert.Len(t, got, 3)
 	assert.Equal(t, got, persisted)
-	assert.Positive(t, got[0].ID)
+	assert.Equal(t, []int{got[0].ID, got[1].ID, got[2].ID}, []int{1, 2, 3})
 	assert.NotEmpty(t, got[0].Name)
 	assert.NotEmpty(t, got[0].Email)
 }
 
-func TestGenerateOneUsesRandomInterface(t *testing.T) {
-	var persisted user
-
-	got := GenerateOne(t, func(value user) error {
-		persisted = value
-		return nil
-	}, user{})
-
-	assert.Equal(t, got, persisted)
-	assert.Positive(t, got.ID)
-	assert.NotEmpty(t, got.Name)
-	assert.NotEmpty(t, got.Email)
-}
-
-func TestGenerateOneWithCombinesWithFixture(t *testing.T) {
+func TestGenerateOneCombinesWithFixture(t *testing.T) {
 	users := fixture.New(user{Name: "Ada"})
 	var persisted user
 
-	got := GenerateOneWith(t, func(value user) error {
+	got := GenerateOne(t, func(value user) error {
 		persisted = value
 		return nil
 	}, func() user {
@@ -114,30 +96,18 @@ func TestManyAcceptsNoValues(t *testing.T) {
 }
 
 func TestGenerateAcceptsZeroCount(t *testing.T) {
+	builds := 0
 	upserts := 0
 
 	got := Generate(t, 0, func(user) error {
 		upserts++
 		return nil
-	}, user{})
-
-	assert.Len(t, got, 0)
-	assert.Equal(t, upserts, 0)
-}
-
-func TestGenerateWithProvidesEachIndex(t *testing.T) {
-	builds := 0
-	upserts := 0
-
-	got := GenerateWith(t, 3, func(user) error {
-		upserts++
-		return nil
-	}, func(index int) user {
+	}, func() user {
 		builds++
-		return user{ID: index + 1}
+		return user{}
 	})
 
-	assert.Equal(t, got, []user{{ID: 1}, {ID: 2}, {ID: 3}})
-	assert.Equal(t, builds, 3)
-	assert.Equal(t, upserts, 3)
+	assert.Len(t, got, 0)
+	assert.Equal(t, builds, 0)
+	assert.Equal(t, upserts, 0)
 }
