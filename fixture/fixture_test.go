@@ -239,3 +239,49 @@ func TestCopy(t *testing.T) {
 
 	assert.Equal(t, original.Bare().tags[0], "orig") // fork shares no memory
 }
+
+type widgetBuilder struct {
+	Builder[widget]
+}
+
+func (b widgetBuilder) Named(name string) widgetBuilder {
+	b.Builder = b.Set(func(value *widget) {
+		value.name = name
+	})
+	return b
+}
+
+func TestBuilderChainsWithoutMutatingItsBaseOrSiblings(t *testing.T) {
+	widgets := widgetBuilder{Builder: NewBuilder(widget{
+		name: "base",
+		tags: []string{"original"},
+	})}
+
+	ada := widgets.Named("Ada").Set(func(value *widget) {
+		value.tags[0] = "ada"
+	}).Bare()
+	grace := widgets.Named("Grace").Bare()
+
+	assert.Equal(t, ada, widget{name: "Ada", tags: []string{"ada"}})
+	assert.Equal(t, grace, widget{name: "Grace", tags: []string{"original"}})
+	assert.Equal(t, widgets.Bare(), widget{name: "base", tags: []string{"original"}})
+}
+
+func TestBuilderWithAppliesExistingVariations(t *testing.T) {
+	builder := NewBuilder(widget{name: "base"})
+
+	got := builder.With(setName("configured")).Bare()
+
+	assert.Equal(t, got.name, "configured")
+	assert.Equal(t, builder.Bare().name, "base")
+}
+
+func TestBaseBuilderStartsFromAnIndependentCopy(t *testing.T) {
+	base := New(widget{name: "base", tags: []string{"original"}})
+	builder := base.Builder().Set(func(value *widget) {
+		value.tags[0] = "changed"
+	})
+
+	assert.Equal(t, builder.Bare().tags, []string{"changed"})
+	assert.Equal(t, base.Bare().tags, []string{"original"})
+}

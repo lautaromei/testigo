@@ -133,11 +133,30 @@ maybeVIP := users.With(fixture.Maybe(asVIP))         // applied ~half the runs
 either   := users.With(fixture.OneOf(asGrace, asVIP)) // one of them, at random
 ```
 
-## `testigo/seed` — database initial conditions
+For an exported, fluent domain fixture, embed the immutable generic builder in
+a private type. Only the fixture value and its domain methods need to be public:
+
+```go
+type userBuilder struct {
+	fixture.Builder[User]
+}
+
+var Users = userBuilder{Builder: fixture.NewBuilder(User{Name: "Default user"})}
+
+func (b userBuilder) WithGithub(value string) userBuilder {
+	b.Builder = b.Set(func(user *User) { user.Github = value })
+	return b
+}
+
+user := Users.WithGithub("ada").With(asVIP).Bare()
+```
+
+## `testigo/seeder` — database initial conditions
 
 Persist the records a test needs without writing a `seedUsers`, `seedOrders`, or
-`seedXX` helper for every case. A small function adapts any repository, including
-repositories whose Upsert method also takes a context or returns a value:
+`seedXX` helper for every case. A typed seeder captures the test and repository
+adapter once, including repositories whose Upsert takes a context or returns a
+value:
 
 ```go
 upsertUser := func(user User) error {
@@ -145,8 +164,10 @@ upsertUser := func(user User) error {
 	return err
 }
 
-ada := seed.One(t, upsertUser, users.With(asVIP))
-team := seed.Many(t, upsertUser, grace, linus, margaret)
+userSeeds := seeder.New(t, upsertUser)
+
+ada := userSeeds.One(users.With(asVIP))
+team := userSeeds.Many(grace, linus, margaret)
 ```
 
 Pass a typed generator function to create and persist random records in one
@@ -162,11 +183,20 @@ randomUser := func() User {
 	}
 }
 
-team := seed.Generate(t, 5, upsertUser, randomUser)
+team := userSeeds.Generate(5, randomUser)
 ```
 
-`seed` establishes initial conditions; database cleanup remains explicit through
-the test's transaction rollback or a `testigo.Resetter`.
+A seeder can also persist a fluent fixture directly; `Persist` calls `Bare()`
+internally and returns the value it stored:
+
+```go
+admin := userSeeds.Persist(
+	userfixture.Users.WithGithub("admin").AsAdmin(),
+)
+```
+
+`seeder` establishes initial conditions; database cleanup remains explicit
+through the test's transaction rollback or a `testigo.Resetter`.
 
 ## `testigo/random` — reproducible test data
 
@@ -277,7 +307,7 @@ import (
 	"github.com/lautaromei/testigo/fixture"  // object mothers: New, With, Times, OneOf, ...
 	"github.com/lautaromei/testigo/memdb"    // keyed state and queries for repository doubles
 	"github.com/lautaromei/testigo/random"   // reproducible test data
-	"github.com/lautaromei/testigo/seed"     // persist explicit or generated initial records
+	"github.com/lautaromei/testigo/seeder"   // persist explicit, generated, or built records
 )
 ```
 

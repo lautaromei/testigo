@@ -1,4 +1,4 @@
-package seed
+package seeder
 
 import (
 	"testing"
@@ -16,13 +16,13 @@ type user struct {
 
 func TestOnePersistsAndReturnsValue(t *testing.T) {
 	var persisted []user
-	upsert := func(value user) error {
+	users := New(t, func(value user) error {
 		persisted = append(persisted, value)
 		return nil
-	}
+	})
 	want := user{ID: 1, Name: "Ada"}
 
-	got := One(t, upsert, want)
+	got := users.One(want)
 
 	assert.Equal(t, got, want)
 	assert.Equal(t, persisted, []user{want})
@@ -30,13 +30,13 @@ func TestOnePersistsAndReturnsValue(t *testing.T) {
 
 func TestManyPersistsInOrderAndReturnsValues(t *testing.T) {
 	var persisted []user
-	upsert := func(value user) error {
+	users := New(t, func(value user) error {
 		persisted = append(persisted, value)
 		return nil
-	}
+	})
 	want := []user{{ID: 1}, {ID: 2}, {ID: 3}}
 
-	got := Many(t, upsert, want...)
+	got := users.Many(want...)
 
 	assert.Equal(t, got, want)
 	assert.Equal(t, persisted, want)
@@ -45,12 +45,12 @@ func TestManyPersistsInOrderAndReturnsValues(t *testing.T) {
 func TestGenerateBuildsAndPersistsValuesInOrder(t *testing.T) {
 	var persisted []user
 	generated := 0
-	upsert := func(value user) error {
+	users := New(t, func(value user) error {
 		persisted = append(persisted, value)
 		return nil
-	}
+	})
 
-	got := Generate(t, 3, upsert, func() user {
+	got := users.Generate(3, func() user {
 		generated++
 		return user{ID: generated, Name: random.Name(), Email: random.Email()}
 	})
@@ -63,14 +63,15 @@ func TestGenerateBuildsAndPersistsValuesInOrder(t *testing.T) {
 }
 
 func TestGenerateOneCombinesWithFixture(t *testing.T) {
-	users := fixture.New(user{Name: "Ada"})
+	base := fixture.New(user{Name: "Ada"})
 	var persisted user
-
-	got := GenerateOne(t, func(value user) error {
+	users := New(t, func(value user) error {
 		persisted = value
 		return nil
-	}, func() user {
-		return users.With(func(value user) user {
+	})
+
+	got := users.GenerateOne(func() user {
+		return base.With(func(value user) user {
 			value.ID = random.ID()
 			value.Email = random.Email()
 			return value
@@ -83,13 +84,32 @@ func TestGenerateOneCombinesWithFixture(t *testing.T) {
 	assert.NotEmpty(t, got.Email)
 }
 
+func TestPersistCallsBareAndPersistsItsFreshValue(t *testing.T) {
+	base := fixture.NewBuilder(user{ID: 1, Name: "base"})
+	builder := base.Set(func(value *user) {
+		value.Name = "Ada"
+	})
+	var persisted user
+	users := New(t, func(value user) error {
+		persisted = value
+		return nil
+	})
+
+	got := users.Persist(builder)
+
+	assert.Equal(t, got, user{ID: 1, Name: "Ada"})
+	assert.Equal(t, persisted, got)
+	assert.Equal(t, base.Bare(), user{ID: 1, Name: "base"})
+}
+
 func TestManyAcceptsNoValues(t *testing.T) {
 	calls := 0
-
-	got := Many(t, func(user) error {
+	users := New(t, func(user) error {
 		calls++
 		return nil
 	})
+
+	got := users.Many()
 
 	assert.Len(t, got, 0)
 	assert.Equal(t, calls, 0)
@@ -98,11 +118,12 @@ func TestManyAcceptsNoValues(t *testing.T) {
 func TestGenerateAcceptsZeroCount(t *testing.T) {
 	builds := 0
 	upserts := 0
-
-	got := Generate(t, 0, func(user) error {
+	users := New(t, func(user) error {
 		upserts++
 		return nil
-	}, func() user {
+	})
+
+	got := users.Generate(0, func() user {
 		builds++
 		return user{}
 	})

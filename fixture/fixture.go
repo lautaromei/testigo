@@ -1,4 +1,5 @@
-// Package fixture builds reusable test values from a canonical base.
+// Package fixture builds reusable test values from a canonical base, either as
+// direct variants or through immutable fluent builders.
 package fixture
 
 import (
@@ -8,6 +9,9 @@ import (
 
 // Variation derives a variant.
 type Variation[T any] = func(T) T
+
+// Configuration mutates a private copy held by a Builder.
+type Configuration[T any] = func(*T)
 
 // With returns a deep copy of base with each variation applied in order.
 func With[T any](base T, variations ...Variation[T]) T {
@@ -66,6 +70,12 @@ func Empty[T any]() Base[T] {
 	return Base[T]{base: zero}
 }
 
+// Builder returns an immutable fluent builder starting from a fresh copy of
+// the base. Each chained operation returns independent state.
+func (f Base[T]) Builder() Builder[T] {
+	return NewBuilder(f.base)
+}
+
 // With returns a fresh variant: a deep copy with variations applied.
 func (f Base[T]) With(variations ...Variation[T]) T {
 	return With(f.base, variations...)
@@ -103,4 +113,38 @@ func (f Base[T]) Slice(n int, each func(i int) []Variation[T]) []T {
 // Copy returns an independent copy of the Base.
 func (f Base[T]) Copy() Base[T] {
 	return Base[T]{base: testigo.Copy(f.base)}
+}
+
+// Builder derives values fluently without mutating its source or sibling
+// builders. Finish a chain with Bare.
+type Builder[T any] struct {
+	value T
+}
+
+// NewBuilder starts an immutable fluent builder from base.
+func NewBuilder[T any](base T) Builder[T] {
+	return Builder[T]{value: testigo.Copy(base)}
+}
+
+// Set applies pointer-based configurations to a fresh copy and returns the
+// resulting builder. Nil configurations are ignored.
+func (b Builder[T]) Set(configurations ...Configuration[T]) Builder[T] {
+	next := testigo.Copy(b.value)
+	for _, configure := range configurations {
+		if configure != nil {
+			configure(&next)
+		}
+	}
+	return Builder[T]{value: next}
+}
+
+// With applies functional variations to a fresh copy and returns the resulting
+// builder.
+func (b Builder[T]) With(variations ...Variation[T]) Builder[T] {
+	return Builder[T]{value: With(b.value, variations...)}
+}
+
+// Bare returns a fresh deep copy of the builder's current value.
+func (b Builder[T]) Bare() T {
+	return testigo.Copy(b.value)
 }
