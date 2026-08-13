@@ -48,9 +48,7 @@ func (g *generator) renderSpy(entry artifact) (spyModel, error) {
 
 	fmt.Fprintf(&g.body, "// %s implements %s and records every call.\n", spyName, interfaceName)
 	fmt.Fprintf(&g.body, "type %s struct {\n\t%s.Spy\n", spyName, testigoAlias)
-	for _, method := range methods {
-		fmt.Fprintf(&g.body, "\t%sFunc func(%s)%s\n", method.name, g.renderParams(method.params), g.renderResults(method.results))
-	}
+	fmt.Fprintf(&g.body, "\twrapped *%s.Reference[%s]\n", testigoAlias, interfaceName)
 	g.body.WriteString("}\n\n")
 	fmt.Fprintf(&g.body, "var _ %s = (*%s)(nil)\n\n", interfaceName, spyName)
 
@@ -58,10 +56,9 @@ func (g *generator) renderSpy(entry artifact) (spyModel, error) {
 		g.renderSpyMethod(spyName, method)
 	}
 
-	fmt.Fprintf(&g.body, "// New%s creates and registers a pristine %s.\n", spyName, spyName)
-	fmt.Fprintf(&g.body, "func New%s(t *%s.T, configure ...func(*%s)) *%s {\n", spyName, testingAlias, spyName, spyName)
-	fmt.Fprintf(&g.body, "\tvalue := &%s{}\n", spyName)
-	g.body.WriteString("\tfor _, configure := range configure {\n\t\tif configure != nil {\n\t\t\tconfigure(value)\n\t\t}\n\t}\n")
+	fmt.Fprintf(&g.body, "// New%s composes and registers a spy around the supplied implementation.\n", spyName)
+	fmt.Fprintf(&g.body, "func New%s(t *%s.T, wrapped %s) *%s {\n", spyName, testingAlias, interfaceName, spyName)
+	fmt.Fprintf(&g.body, "\tvalue := &%s{wrapped: %s.Ref(wrapped)}\n", spyName, testigoAlias)
 	fmt.Fprintf(&g.body, "\treturn %s.NewDouble(t, value)\n", testigoAlias)
 	g.body.WriteString("}\n\n")
 
@@ -122,25 +119,11 @@ func (g *generator) renderSpyMethod(spyName string, method methodModel) {
 	} else {
 		fmt.Fprintf(&g.body, "\ts.Call(%s)\n", callArgs)
 	}
-	fmt.Fprintf(&g.body, "\tif s.%sFunc != nil {\n", method.name)
 	funcArgs := parameterNames(method.params, true)
 	if len(method.results) == 0 {
-		fmt.Fprintf(&g.body, "\t\ts.%sFunc(%s)\n\t\treturn\n", method.name, funcArgs)
+		fmt.Fprintf(&g.body, "\ts.wrapped.Get().%s(%s)\n", method.name, funcArgs)
 	} else {
-		fmt.Fprintf(&g.body, "\t\treturn s.%sFunc(%s)\n", method.name, funcArgs)
-	}
-	g.body.WriteString("\t}\n")
-	for i, result := range method.results {
-		fmt.Fprintf(&g.body, "\tvar result%d %s\n", i, g.imports.typeString(result))
-	}
-	if len(method.results) == 0 {
-		g.body.WriteString("\treturn\n")
-	} else {
-		results := make([]string, len(method.results))
-		for i := range results {
-			results[i] = fmt.Sprintf("result%d", i)
-		}
-		fmt.Fprintf(&g.body, "\treturn %s\n", strings.Join(results, ", "))
+		fmt.Fprintf(&g.body, "\treturn s.wrapped.Get().%s(%s)\n", method.name, funcArgs)
 	}
 	g.body.WriteString("}\n\n")
 }
@@ -185,7 +168,6 @@ func parameterNames(params []parameter, expandVariadic bool) string {
 }
 
 func (g *generator) renderDoubles() {
-	testigoAlias := g.imports.add("github.com/lautaromei/testigo", "testigo")
 	testingAlias := g.imports.add("testing", "testing")
 	g.body.WriteString("// Doubles groups every generated spy for one test.\n")
 	g.body.WriteString("type Doubles struct {\n")
@@ -193,15 +175,16 @@ func (g *generator) renderDoubles() {
 		fmt.Fprintf(&g.body, "\t%s *%s\n", spy.fieldName, spy.typeName)
 	}
 	g.body.WriteString("}\n\n")
-	g.body.WriteString("// NewDoubles constructs, optionally configures, and registers every generated spy.\n")
-	fmt.Fprintf(&g.body, "func NewDoubles(t *%s.T, configure ...func(*Doubles)) *Doubles {\n", testingAlias)
+	g.body.WriteString("// NewDoubles composes and registers every generated spy around the supplied implementations.\n")
+	fmt.Fprintf(&g.body, "func NewDoubles(t *%s.T", testingAlias)
+	for _, spy := range g.spies {
+		fmt.Fprintf(&g.body, ", %s %s", lowerFirst(spy.fieldName), g.imports.typeString(spy.interfaceType))
+	}
+	g.body.WriteString(") *Doubles {\n")
 	g.body.WriteString("\tvalue := &Doubles{\n")
 	for _, spy := range g.spies {
-		fmt.Fprintf(&g.body, "\t\t%s: &%s{},\n", spy.fieldName, spy.typeName)
+		fmt.Fprintf(&g.body, "\t\t%s: New%s(t, %s),\n", spy.fieldName, spy.typeName, lowerFirst(spy.fieldName))
 	}
-	g.body.WriteString("\t}\n\tfor _, configure := range configure {\n\t\tif configure != nil {\n\t\t\tconfigure(value)\n\t\t}\n\t}\n")
-	for _, spy := range g.spies {
-		fmt.Fprintf(&g.body, "\tvalue.%s = %s.NewDouble(t, value.%s)\n", spy.fieldName, testigoAlias, spy.fieldName)
-	}
+	g.body.WriteString("\t}\n")
 	g.body.WriteString("\treturn value\n}\n\n")
 }

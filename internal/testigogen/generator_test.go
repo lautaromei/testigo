@@ -2,6 +2,8 @@ package testigogen
 
 import (
 	"bytes"
+	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,6 +31,10 @@ func TestGenerateMatchesCheckedInContract(t *testing.T) {
 		"func (b usersBuilder) WithEmail",
 		"func NewUsersDB",
 		"type MailerSpy struct",
+		"wrapped *testigo.Reference[domain.Mailer]",
+		"return s.wrapped.Get().Broadcast(ctx, to...)",
+		"func NewRepoStub(base usersBuilder) *RepoStub",
+		"func NewRepoErrorsErrorStub(base usersBuilder, err error) *RepoErrorsErrorStub",
 		"func NewUserRepoSeeder",
 		"type Doubles struct",
 		"func NewDoubles",
@@ -36,6 +42,48 @@ func TestGenerateMatchesCheckedInContract(t *testing.T) {
 		if !strings.Contains(string(got), fragment) {
 			t.Errorf("generated source does not contain %q", fragment)
 		}
+	}
+	for _, forbidden := range []string{"SendFunc", "configure ...func(*MailerSpy)"} {
+		if strings.Contains(string(got), forbidden) {
+			t.Errorf("generated source must not contain %q", forbidden)
+		}
+	}
+}
+
+func TestValidateStubFixture(t *testing.T) {
+	user := types.NewNamed(types.NewTypeName(token.NoPos, nil, "User", nil), types.NewStruct(nil, nil), nil)
+	errorType := types.Universe.Lookup("error").Type()
+
+	newInterface := func(results ...types.Type) types.Type {
+		vars := make([]*types.Var, len(results))
+		for i, result := range results {
+			vars[i] = types.NewVar(token.NoPos, nil, "", result)
+		}
+		method := types.NewFunc(token.NoPos, nil, "Find", types.NewSignatureType(nil, nil, nil, nil, types.NewTuple(vars...), false))
+		return types.NewInterfaceType([]*types.Func{method}, nil)
+	}
+
+	for _, test := range []struct {
+		name    string
+		entry   artifact
+		iface   types.Type
+		wantErr string
+	}{
+		{name: "stub needs fixture result", entry: artifact{name: "Repo", stub: true, stubFixture: "Users"}, iface: newInterface(errorType), wantErr: "not returned"},
+		{name: "error stub needs error result", entry: artifact{name: "Repo", errorStub: true, stubFixture: "Users"}, iface: newInterface(user), wantErr: "must return error"},
+		{name: "valid stub", entry: artifact{name: "Repo", stub: true, stubFixture: "Users"}, iface: newInterface(user, errorType)},
+		{name: "valid error stub", entry: artifact{name: "Repo", errorStub: true, stubFixture: "Users"}, iface: newInterface(user, errorType)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			test.entry.typeOf = test.iface
+			err := validateStubFixture(test.entry, user)
+			if test.wantErr == "" && err != nil {
+				t.Fatal(err)
+			}
+			if test.wantErr != "" && (err == nil || !strings.Contains(err.Error(), test.wantErr)) {
+				t.Fatalf("got %v, want error containing %q", err, test.wantErr)
+			}
+		})
 	}
 }
 

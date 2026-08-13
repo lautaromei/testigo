@@ -86,78 +86,83 @@ func (b defaultUsersBuilder) WithTags(value []string) defaultUsersBuilder {
 // MailerSpy implements domain.Mailer and records every call.
 type MailerSpy struct {
 	testigo.Spy
-	BroadcastFunc func(ctx context.Context, to ...string) (int, error)
-	PingFunc      func()
-	SendFunc      func(ctx context.Context, to string) error
+	wrapped *testigo.Reference[domain.Mailer]
 }
 
 var _ domain.Mailer = (*MailerSpy)(nil)
 
 func (s *MailerSpy) Broadcast(ctx context.Context, to ...string) (int, error) {
 	s.Call(ctx, to)
-	if s.BroadcastFunc != nil {
-		return s.BroadcastFunc(ctx, to...)
-	}
-	var result0 int
-	var result1 error
-	return result0, result1
+	return s.wrapped.Get().Broadcast(ctx, to...)
 }
 
 func (s *MailerSpy) Ping() {
 	s.Call()
-	if s.PingFunc != nil {
-		s.PingFunc()
-		return
-	}
-	return
+	s.wrapped.Get().Ping()
 }
 
 func (s *MailerSpy) Send(ctx context.Context, to string) error {
 	s.Call(ctx, to)
-	if s.SendFunc != nil {
-		return s.SendFunc(ctx, to)
-	}
-	var result0 error
-	return result0
+	return s.wrapped.Get().Send(ctx, to)
 }
 
-// NewMailerSpy creates and registers a pristine MailerSpy.
-func NewMailerSpy(t *testing.T, configure ...func(*MailerSpy)) *MailerSpy {
-	value := &MailerSpy{}
-	for _, configure := range configure {
-		if configure != nil {
-			configure(value)
-		}
-	}
+// NewMailerSpy composes and registers a spy around the supplied implementation.
+func NewMailerSpy(t *testing.T, wrapped domain.Mailer) *MailerSpy {
+	value := &MailerSpy{wrapped: testigo.Ref(wrapped)}
 	return testigo.NewDouble(t, value)
+}
+
+// RepoStub implements domain.UserRepository using values from the supplied fixture.
+type RepoStub struct {
+	base usersBuilder
+}
+
+var _ domain.UserRepository = (*RepoStub)(nil)
+
+func (s *RepoStub) Upsert(ctx context.Context, user domain.User) (domain.User, error) {
+	result0 := s.base.Bare()
+	var result1 error
+	return result0, result1
+}
+
+// NewRepoStub creates a stub backed by the supplied fixture.
+func NewRepoStub(base usersBuilder) *RepoStub { return &RepoStub{base: base} }
+
+// RepoErrorsErrorStub implements domain.UserRepository and returns the configured error.
+type RepoErrorsErrorStub struct {
+	base usersBuilder
+	err  error
+}
+
+var _ domain.UserRepository = (*RepoErrorsErrorStub)(nil)
+
+func (s *RepoErrorsErrorStub) Upsert(ctx context.Context, user domain.User) (domain.User, error) {
+	result0 := s.base.Bare()
+	var result1 error = s.err
+	return result0, result1
+}
+
+// NewRepoErrorsErrorStub creates an error stub backed by the supplied fixture.
+func NewRepoErrorsErrorStub(base usersBuilder, err error) *RepoErrorsErrorStub {
+	return &RepoErrorsErrorStub{base: base, err: err}
 }
 
 // UserRepoSpy implements domain.UserRepository and records every call.
 type UserRepoSpy struct {
 	testigo.Spy
-	UpsertFunc func(ctx context.Context, user domain.User) (domain.User, error)
+	wrapped *testigo.Reference[domain.UserRepository]
 }
 
 var _ domain.UserRepository = (*UserRepoSpy)(nil)
 
 func (s *UserRepoSpy) Upsert(ctx context.Context, user domain.User) (domain.User, error) {
 	s.Call(ctx, user)
-	if s.UpsertFunc != nil {
-		return s.UpsertFunc(ctx, user)
-	}
-	var result0 domain.User
-	var result1 error
-	return result0, result1
+	return s.wrapped.Get().Upsert(ctx, user)
 }
 
-// NewUserRepoSpy creates and registers a pristine UserRepoSpy.
-func NewUserRepoSpy(t *testing.T, configure ...func(*UserRepoSpy)) *UserRepoSpy {
-	value := &UserRepoSpy{}
-	for _, configure := range configure {
-		if configure != nil {
-			configure(value)
-		}
-	}
+// NewUserRepoSpy composes and registers a spy around the supplied implementation.
+func NewUserRepoSpy(t *testing.T, wrapped domain.UserRepository) *UserRepoSpy {
+	value := &UserRepoSpy{wrapped: testigo.Ref(wrapped)}
 	return testigo.NewDouble(t, value)
 }
 
@@ -238,18 +243,11 @@ type Doubles struct {
 	UserRepo *UserRepoSpy
 }
 
-// NewDoubles constructs, optionally configures, and registers every generated spy.
-func NewDoubles(t *testing.T, configure ...func(*Doubles)) *Doubles {
+// NewDoubles composes and registers every generated spy around the supplied implementations.
+func NewDoubles(t *testing.T, mailer domain.Mailer, userRepo domain.UserRepository) *Doubles {
 	value := &Doubles{
-		Mailer:   &MailerSpy{},
-		UserRepo: &UserRepoSpy{},
+		Mailer:   NewMailerSpy(t, mailer),
+		UserRepo: NewUserRepoSpy(t, userRepo),
 	}
-	for _, configure := range configure {
-		if configure != nil {
-			configure(value)
-		}
-	}
-	value.Mailer = testigo.NewDouble(t, value.Mailer)
-	value.UserRepo = testigo.NewDouble(t, value.UserRepo)
 	return value
 }

@@ -89,6 +89,15 @@ func (g *generator) render() error {
 			}
 			g.spies = append(g.spies, spy)
 		}
+		if entry.stub || entry.errorStub {
+			fixture, ok := g.fixtureArtifact(entry.stubFixture)
+			if !ok {
+				return fmt.Errorf("testigo-gen: %s: fixture %q not found", entry.name, entry.stubFixture)
+			}
+			if err := g.renderStub(entry, fixture, entry.errorStub); err != nil {
+				return err
+			}
+		}
 		if entry.seederMethod != "" {
 			if err := g.renderSeeder(entry); err != nil {
 				return err
@@ -99,6 +108,15 @@ func (g *generator) render() error {
 		g.renderDoubles()
 	}
 	return nil
+}
+
+func (g *generator) fixtureArtifact(name string) (artifact, bool) {
+	for _, entry := range g.model.artifacts {
+		if entry.name == name && entry.fixture {
+			return entry, true
+		}
+	}
+	return artifact{}, false
 }
 
 func (g *generator) renderRandom(value types.Type, function string) error {

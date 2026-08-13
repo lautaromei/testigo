@@ -146,6 +146,13 @@ func fixIndirections(v reflect.Value, visited map[visitKey]reflect.Value, pin pi
 
 var spyPtrType = reflect.TypeOf((*Spy)(nil))
 
+// PinnedReference marks a pointer that must retain its identity while a double
+// is restored. It is used by composition-based generated spies so their wrapped
+// implementation is never cloned between subtests.
+type PinnedReference interface {
+	TestigoPinnedReference()
+}
+
 // baselinePin keeps two kinds of pointer by identity when cloning a double's
 // baseline: pointers to another registered double (so the wiring between
 // doubles survives a restore) and *Spy pointers (so a spy tracked for
@@ -153,6 +160,11 @@ var spyPtrType = reflect.TypeOf((*Spy)(nil))
 func baselinePin(v reflect.Value) bool {
 	if v.Type() == spyPtrType {
 		return true
+	}
+	if v.CanInterface() {
+		if _, ok := v.Interface().(PinnedReference); ok {
+			return true
+		}
 	}
 	return doubleAt(v.Pointer()) != nil
 }

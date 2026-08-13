@@ -31,6 +31,9 @@ type artifact struct {
 	memdbKey     string
 	spy          bool
 	seederMethod string
+	stub         bool
+	errorStub    bool
+	stubFixture  string
 }
 
 func loadModel(opts Options) (*model, error) {
@@ -105,6 +108,24 @@ func loadModel(opts Options) (*model, error) {
 	if len(result.artifacts) == 0 {
 		return nil, fmt.Errorf("testigo-gen: specification %q has no %q tags", opts.SpecType, tagName)
 	}
+	fixtures := make(map[string]types.Type)
+	for _, entry := range result.artifacts {
+		if entry.fixture {
+			fixtures[entry.name] = entry.typeOf
+		}
+	}
+	for _, entry := range result.artifacts {
+		if !entry.stub && !entry.errorStub {
+			continue
+		}
+		fixtureType, ok := fixtures[entry.stubFixture]
+		if !ok {
+			return nil, fmt.Errorf("testigo-gen: %s: fixture %q not found", entry.name, entry.stubFixture)
+		}
+		if err := validateStubFixture(entry, fixtureType); err != nil {
+			return nil, err
+		}
+	}
 	sort.Slice(result.artifacts, func(i, j int) bool {
 		return result.artifacts[i].name < result.artifacts[j].name
 	})
@@ -124,6 +145,16 @@ func parseArtifact(name string, typeOf types.Type, raw string) (artifact, error)
 			entry.fixture = true
 		case "spy":
 			entry.spy = true
+		case "stub", "errorstub":
+			if !hasValue || value == "" {
+				return artifact{}, fmt.Errorf("testigo-gen: %s requires a fixture name", key)
+			}
+			entry.stubFixture = value
+			if key == "stub" {
+				entry.stub = true
+			} else {
+				entry.errorStub = true
+			}
 		case "base", "default":
 			if !hasValue || value == "" {
 				return artifact{}, fmt.Errorf("testigo-gen: %s requires a function name", key)
@@ -143,8 +174,11 @@ func parseArtifact(name string, typeOf types.Type, raw string) (artifact, error)
 			return artifact{}, fmt.Errorf("testigo-gen: %s: unknown tag option %q", name, key)
 		}
 	}
-	if !entry.fixture && !entry.spy && entry.seederMethod == "" {
-		return artifact{}, fmt.Errorf("testigo-gen: %s: tag must request fixture, spy, or seeder", name)
+	if !entry.fixture && !entry.spy && !entry.stub && !entry.errorStub && entry.seederMethod == "" {
+		return artifact{}, fmt.Errorf("testigo-gen: %s: tag must request fixture, spy, errorstub, or seeder", name)
+	}
+	if entry.stub && entry.errorStub {
+		return artifact{}, fmt.Errorf("testigo-gen: %s: stub and errorstub are mutually exclusive", name)
 	}
 	if (entry.baseFunc != "" || entry.memdbKey != "") && !entry.fixture {
 		return artifact{}, fmt.Errorf("testigo-gen: %s: base/default and memdb require fixture", name)
@@ -181,6 +215,11 @@ func validateArtifact(pkg *packages.Package, entry artifact) error {
 			return fmt.Errorf("testigo-gen: %s: spy requires an interface; concrete types cannot be substituted", entry.name)
 		}
 	}
+	if entry.stub || entry.errorStub {
+		if _, ok := types.Unalias(entry.typeOf).Underlying().(*types.Interface); !ok {
+			return fmt.Errorf("testigo-gen: %s: stub requires an interface", entry.name)
+		}
+	}
 	if entry.seederMethod != "" {
 		selection := lookupMethod(entry.typeOf, entry.seederMethod)
 		if selection == nil {
@@ -188,6 +227,36 @@ func validateArtifact(pkg *packages.Package, entry artifact) error {
 		}
 	}
 	return nil
+}
+
+func validateStubFixture(entry artifact, fixtureType types.Type) error {
+	if !isNamedStruct(fixtureType) {
+		return fmt.Errorf("testigo-gen: %s: stub fixture %q must be a named struct", entry.name, entry.stubFixture)
+	}
+	iface := types.Unalias(entry.typeOf).Underlying().(*types.Interface)
+	iface.Complete()
+	hasFixtureResult := false
+	hasErrorResult := false
+	for i := range iface.NumMethods() {
+		signature := iface.Method(i).Type().(*types.Signature)
+		for j := range signature.Results().Len() {
+			result := signature.Results().At(j).Type()
+			hasFixtureResult = hasFixtureResult || types.AssignableTo(fixtureType, result)
+			hasErrorResult = hasErrorResult || types.Identical(result, types.Universe.Lookup("error").Type())
+		}
+	}
+	if entry.stub && !hasFixtureResult {
+		return fmt.Errorf("testigo-gen: %s: stub fixture %q is not returned by any interface method", entry.name, entry.stubFixture)
+	}
+	if entry.errorStub && !hasErrorResult {
+		return fmt.Errorf("testigo-gen: %s: errorstub interface must return error", entry.name)
+	}
+	return nil
+}
+
+func isNamedStruct(value types.Type) bool {
+	_, _, ok := namedStruct(value)
+	return ok
 }
 
 func validateBaseFunc(pkg *packages.Package, name string, want types.Type) error {

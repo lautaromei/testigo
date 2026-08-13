@@ -14,6 +14,24 @@ type Spy = core.Spy
 // Matcher matches a call argument when an exact expected value is too rigid.
 type Matcher = core.Matcher
 
+// Reference holds a composed dependency by identity across double resets.
+// It is primarily used by generated composition-based spies.
+type Reference[T any] struct {
+	value T
+}
+
+// Ref wraps value so a registered double keeps that exact reference when it is
+// restored between subtests.
+func Ref[T any](value T) *Reference[T] {
+	return &Reference[T]{value: value}
+}
+
+// Get returns the composed dependency.
+func (r *Reference[T]) Get() T { return r.value }
+
+// TestigoPinnedReference implements core.PinnedReference.
+func (*Reference[T]) TestigoPinnedReference() {}
+
 // NewSpy builds a standalone Spy.
 func NewSpy() *Spy {
 	return core.NewSpy()

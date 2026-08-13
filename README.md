@@ -271,20 +271,33 @@ private tagged struct:
 ```go
 //go:generate go tool testigo-gen
 type testigoSpec struct {
-	Users    domain.User           `testigo:"fixture,memdb=ID"`
-	Mailer   domain.Mailer         `testigo:"spy"`
-	UserRepo domain.UserRepository `testigo:"spy,seeder=Upsert"`
+	Users      domain.User           `testigo:"fixture,memdb=ID"`
+	Mailer     domain.Mailer         `testigo:"spy"`
+	UserRepo   domain.UserRepository `testigo:"spy,seeder=Upsert"`
+	Repo       domain.UserRepository `testigo:"stub=Users"`
+	RepoErrors domain.UserRepository `testigo:"errorstub=Users"`
 }
 ```
 
 Running `go generate` creates:
 
 - `RandomUser`, plus an exported `Users.WithName(...).Bare()` fixture builder;
-- `MailerSpy`, `UserRepoSpy`, and constructors that register them with testigo;
-- one `Doubles` group and `NewDoubles(t, ...)` for configuring and registering
-  all generated spies together;
+- `MailerSpy`, `UserRepoSpy`, and composition-based constructors that register them with testigo;
+- one `Doubles` group and `NewDoubles(t, realMailer, realUserRepo)` for
+  composing and registering all generated spies together;
 - `NewUserRepoSeeder`, inferred from `Upsert`; and
 - `NewUsersDB`, keyed by `User.ID`.
+
+Stubs are generated from the interface signature too. `stub=Users` generates
+`NewRepoStub(Users)` and returns a fresh value from that fixture wherever a
+method can return the fixture type. `errorstub=Users` generates an
+error-returning variant such as `NewRepoErrorsErrorStub(Users, err)`, returning
+the fixture value alongside that error when the signature supports both. A
+`stub` is rejected unless the interface returns the fixture type; an `errorstub`
+is rejected unless the interface returns `error`. Spies do not expose
+return-function hooks: `NewMailerSpy(t, realMailer)` wraps the supplied
+implementation, records calls, and delegates all return values to it.
+The composed implementation retains its identity across `testigo.Run` resets.
 
 The fixture base is random by default and inferred from field types and names.
 Use `default=defaultUser` in the tag to supply your own `func() domain.User`.
