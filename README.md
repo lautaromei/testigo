@@ -299,6 +299,20 @@ return-function hooks: `NewMailerSpy(t, realMailer)` wraps the supplied
 implementation, records calls, and delegates all return values to it.
 The composed implementation retains its identity across `testigo.Run` resets.
 
+For repository-shaped interfaces, add `collections=one` to return one fresh
+fixture in every compatible `[]T` result, and `found=true` to return `true` in
+every `bool` result. Both options also work with `errorstub`:
+
+```go
+Catalog      domain.UserCatalog `testigo:"stub=Users,collections=one,found=true"`
+CatalogError domain.UserCatalog `testigo:"errorstub=Users,collections=one,found=true"`
+WriterError  domain.UserWriter  `testigo:"errorstub"`
+```
+
+`collections` accepts `one` or a non-negative number. An `errorstub` without a
+fixture is intended for interfaces such as `Save(...) error`; its constructor
+only receives the error to return.
+
 The fixture base is random by default and inferred from field types and names.
 Use `default=defaultUser` in the tag to supply your own `func() domain.User`.
 Fields that cannot be safely inferred retain their zero value; mark a field with

@@ -92,3 +92,24 @@ func TestGeneratedStubsUseFixtureAndError(t *testing.T) {
 	assert.Equal(t, err, wantErr)
 	assert.Equal(t, got.Name, "Grace")
 }
+
+func TestGeneratedCollectionLookupAndPureErrorStubs(t *testing.T) {
+	catalog := NewCatalogStub(Users.WithName("Ada"))
+	items, err := catalog.List(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, items[0].Name, "Ada")
+
+	got, found, err := catalog.Get(context.Background(), 1)
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, got.Name, "Ada")
+
+	wantErr := errors.New("unavailable")
+	failingCatalog := NewCatalogErrorErrorStub(Users.WithName("Ada"), wantErr)
+	items, err = failingCatalog.List(context.Background())
+	assert.Equal(t, err, wantErr)
+	assert.Equal(t, items[0].Name, "Ada")
+
+	writer := NewWriterErrorErrorStub(wantErr)
+	assert.Equal(t, writer.Save(context.Background(), domain.User{}), wantErr)
+}

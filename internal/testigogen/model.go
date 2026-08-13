@@ -5,6 +5,7 @@ import (
 	"go/types"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -34,6 +35,8 @@ type artifact struct {
 	stub         bool
 	errorStub    bool
 	stubFixture  string
+	collections  int
+	found        bool
 }
 
 func loadModel(opts Options) (*model, error) {
@@ -118,6 +121,12 @@ func loadModel(opts Options) (*model, error) {
 		if !entry.stub && !entry.errorStub {
 			continue
 		}
+		if entry.stubFixture == "" {
+			if err := validateErrorStub(entry); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		fixtureType, ok := fixtures[entry.stubFixture]
 		if !ok {
 			return nil, fmt.Errorf("testigo-gen: %s: fixture %q not found", entry.name, entry.stubFixture)
@@ -145,16 +154,36 @@ func parseArtifact(name string, typeOf types.Type, raw string) (artifact, error)
 			entry.fixture = true
 		case "spy":
 			entry.spy = true
-		case "stub", "errorstub":
+		case "stub":
 			if !hasValue || value == "" {
 				return artifact{}, fmt.Errorf("testigo-gen: %s requires a fixture name", key)
 			}
 			entry.stubFixture = value
-			if key == "stub" {
-				entry.stub = true
-			} else {
-				entry.errorStub = true
+			entry.stub = true
+		case "errorstub":
+			if hasValue && value == "" {
+				return artifact{}, fmt.Errorf("testigo-gen: errorstub fixture name cannot be empty")
 			}
+			entry.stubFixture = value
+			entry.errorStub = true
+		case "collections":
+			if !hasValue || value == "" {
+				return artifact{}, fmt.Errorf("testigo-gen: collections requires one or a non-negative count")
+			}
+			if value == "one" {
+				entry.collections = 1
+				break
+			}
+			count, err := strconv.Atoi(value)
+			if err != nil || count < 0 {
+				return artifact{}, fmt.Errorf("testigo-gen: collections must be one or a non-negative count, got %q", value)
+			}
+			entry.collections = count
+		case "found":
+			if !hasValue || value != "true" {
+				return artifact{}, fmt.Errorf("testigo-gen: found only accepts true")
+			}
+			entry.found = true
 		case "base", "default":
 			if !hasValue || value == "" {
 				return artifact{}, fmt.Errorf("testigo-gen: %s requires a function name", key)
@@ -179,6 +208,12 @@ func parseArtifact(name string, typeOf types.Type, raw string) (artifact, error)
 	}
 	if entry.stub && entry.errorStub {
 		return artifact{}, fmt.Errorf("testigo-gen: %s: stub and errorstub are mutually exclusive", name)
+	}
+	if (entry.collections > 0 || entry.found) && !entry.stub && !entry.errorStub {
+		return artifact{}, fmt.Errorf("testigo-gen: %s: collections and found require stub or errorstub", name)
+	}
+	if entry.collections > 0 && entry.stubFixture == "" {
+		return artifact{}, fmt.Errorf("testigo-gen: %s: collections requires a fixture", name)
 	}
 	if (entry.baseFunc != "" || entry.memdbKey != "") && !entry.fixture {
 		return artifact{}, fmt.Errorf("testigo-gen: %s: base/default and memdb require fixture", name)
@@ -237,12 +272,14 @@ func validateStubFixture(entry artifact, fixtureType types.Type) error {
 	iface.Complete()
 	hasFixtureResult := false
 	hasErrorResult := false
+	hasBoolResult := false
 	for i := range iface.NumMethods() {
 		signature := iface.Method(i).Type().(*types.Signature)
 		for j := range signature.Results().Len() {
 			result := signature.Results().At(j).Type()
-			hasFixtureResult = hasFixtureResult || types.AssignableTo(fixtureType, result)
+			hasFixtureResult = hasFixtureResult || types.AssignableTo(fixtureType, result) || (entry.collections > 0 && sliceAccepts(result, fixtureType))
 			hasErrorResult = hasErrorResult || types.Identical(result, types.Universe.Lookup("error").Type())
+			hasBoolResult = hasBoolResult || isBool(result)
 		}
 	}
 	if entry.stub && !hasFixtureResult {
@@ -251,7 +288,45 @@ func validateStubFixture(entry artifact, fixtureType types.Type) error {
 	if entry.errorStub && !hasErrorResult {
 		return fmt.Errorf("testigo-gen: %s: errorstub interface must return error", entry.name)
 	}
+	if entry.found && !hasBoolResult {
+		return fmt.Errorf("testigo-gen: %s: found=true requires a bool result", entry.name)
+	}
 	return nil
+}
+
+func validateErrorStub(entry artifact) error {
+	if entry.stub {
+		return fmt.Errorf("testigo-gen: %s: stub requires a fixture", entry.name)
+	}
+	iface := types.Unalias(entry.typeOf).Underlying().(*types.Interface)
+	iface.Complete()
+	hasBoolResult := false
+	hasErrorResult := false
+	for i := range iface.NumMethods() {
+		signature := iface.Method(i).Type().(*types.Signature)
+		for j := range signature.Results().Len() {
+			result := signature.Results().At(j).Type()
+			hasBoolResult = hasBoolResult || isBool(result)
+			hasErrorResult = hasErrorResult || types.Identical(result, types.Universe.Lookup("error").Type())
+		}
+	}
+	if entry.found && !hasBoolResult {
+		return fmt.Errorf("testigo-gen: %s: found=true requires a bool result", entry.name)
+	}
+	if hasErrorResult {
+		return nil
+	}
+	return fmt.Errorf("testigo-gen: %s: errorstub interface must return error", entry.name)
+}
+
+func sliceAccepts(result, element types.Type) bool {
+	slice, ok := types.Unalias(result).Underlying().(*types.Slice)
+	return ok && types.AssignableTo(element, slice.Elem())
+}
+
+func isBool(value types.Type) bool {
+	basic, ok := types.Unalias(value).Underlying().(*types.Basic)
+	return ok && basic.Kind() == types.Bool
 }
 
 func isNamedStruct(value types.Type) bool {

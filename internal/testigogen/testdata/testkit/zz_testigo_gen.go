@@ -15,6 +15,55 @@ import (
 	"github.com/lautaromei/testigo/seeder"
 )
 
+// CatalogStub implements domain.UserCatalog using values from the supplied fixture.
+type CatalogStub struct {
+	base usersBuilder
+}
+
+var _ domain.UserCatalog = (*CatalogStub)(nil)
+
+func (s *CatalogStub) Get(ctx context.Context, id int) (domain.User, bool, error) {
+	result0 := s.base.Bare()
+	var result1 bool = true
+	var result2 error
+	return result0, result1, result2
+}
+
+func (s *CatalogStub) List(ctx context.Context) ([]domain.User, error) {
+	result0 := []domain.User{s.base.Bare()}
+	var result1 error
+	return result0, result1
+}
+
+// NewCatalogStub creates a stub backed by the supplied fixture.
+func NewCatalogStub(base usersBuilder) *CatalogStub { return &CatalogStub{base: base} }
+
+// CatalogErrorErrorStub implements domain.UserCatalog and returns the configured error.
+type CatalogErrorErrorStub struct {
+	base usersBuilder
+	err  error
+}
+
+var _ domain.UserCatalog = (*CatalogErrorErrorStub)(nil)
+
+func (s *CatalogErrorErrorStub) Get(ctx context.Context, id int) (domain.User, bool, error) {
+	result0 := s.base.Bare()
+	var result1 bool = true
+	var result2 error = s.err
+	return result0, result1, result2
+}
+
+func (s *CatalogErrorErrorStub) List(ctx context.Context) ([]domain.User, error) {
+	result0 := []domain.User{s.base.Bare()}
+	var result1 error = s.err
+	return result0, result1
+}
+
+// NewCatalogErrorErrorStub creates an error stub backed by the supplied fixture.
+func NewCatalogErrorErrorStub(base usersBuilder, err error) *CatalogErrorErrorStub {
+	return &CatalogErrorErrorStub{base: base, err: err}
+}
+
 // RandomUser returns a fresh random domain.User.
 func RandomUser() domain.User {
 	return domain.User{
@@ -236,6 +285,21 @@ func NewUsersDB(seed ...domain.User) memdb.DB[domain.User] {
 
 // DB creates an in-memory database for Users.
 func (usersBuilder) DB(seed ...domain.User) memdb.DB[domain.User] { return NewUsersDB(seed...) }
+
+// WriterErrorErrorStub implements domain.UserWriter and returns the configured error.
+type WriterErrorErrorStub struct {
+	err error
+}
+
+var _ domain.UserWriter = (*WriterErrorErrorStub)(nil)
+
+func (s *WriterErrorErrorStub) Save(ctx context.Context, user domain.User) error {
+	var result0 error = s.err
+	return result0
+}
+
+// NewWriterErrorErrorStub creates an error stub.
+func NewWriterErrorErrorStub(err error) *WriterErrorErrorStub { return &WriterErrorErrorStub{err: err} }
 
 // Doubles groups every generated spy for one test.
 type Doubles struct {

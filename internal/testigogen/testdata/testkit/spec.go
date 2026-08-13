@@ -15,4 +15,7 @@ type testigoSpec struct {
 	UserRepo     domain.UserRepository `testigo:"spy,seeder=Upsert"`
 	Repo         domain.UserRepository `testigo:"stub=Users"`
 	RepoErrors   domain.UserRepository `testigo:"errorstub=Users"`
+	Catalog      domain.UserCatalog    `testigo:"stub=Users,collections=one,found=true"`
+	CatalogError domain.UserCatalog    `testigo:"errorstub=Users,collections=one,found=true"`
+	WriterError  domain.UserWriter     `testigo:"errorstub"`
 }

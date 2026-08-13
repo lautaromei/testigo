@@ -90,9 +90,13 @@ func (g *generator) render() error {
 			g.spies = append(g.spies, spy)
 		}
 		if entry.stub || entry.errorStub {
-			fixture, ok := g.fixtureArtifact(entry.stubFixture)
-			if !ok {
-				return fmt.Errorf("testigo-gen: %s: fixture %q not found", entry.name, entry.stubFixture)
+			var fixture *artifact
+			if entry.stubFixture != "" {
+				resolved, ok := g.fixtureArtifact(entry.stubFixture)
+				if !ok {
+					return fmt.Errorf("testigo-gen: %s: fixture %q not found", entry.name, entry.stubFixture)
+				}
+				fixture = &resolved
 			}
 			if err := g.renderStub(entry, fixture, entry.errorStub); err != nil {
 				return err

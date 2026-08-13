@@ -33,3 +33,12 @@ type Mailer interface {
 type UserRepository interface {
 	Upsert(ctx context.Context, user User) (User, error)
 }
+
+type UserCatalog interface {
+	List(ctx context.Context) ([]User, error)
+	Get(ctx context.Context, id int) (User, bool, error)
+}
+
+type UserWriter interface {
+	Save(ctx context.Context, user User) error
+}
